@@ -7,25 +7,26 @@
     "url": "https://github.com/theastraway/mind-mcp-server",
     "source": "github"
   },
-  "version": "0.5.3",
+  "version": "0.5.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@astramindapp/mcp-server",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "transport": {
         "type": "stdio"
       },
-      "environment_variables": [
+      "environmentVariables": [
         {
           "name": "MIND_API_KEY",
           "description": "Your MIND Developer API key (get one at m-i-n-d.ai)",
-          "required": true
+          "isRequired": true,
+          "isSecret": true
         },
         {
           "name": "MIND_BASE_URL",
           "description": "MIND API base URL",
-          "required": false,
+          "isRequired": false,
           "default": "https://m-i-n-d.ai"
         }
       ]
