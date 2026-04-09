@@ -1,0 +1,34 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.theastraway/mind",
+  "title": "MIND",
+  "description": "Personal knowledge graph AI memory. 15 tools, 89 actions. Emotional intelligence, CRM, social.",
+  "repository": {
+    "url": "https://github.com/theastraway/mind-mcp-server",
+    "source": "github"
+  },
+  "version": "0.5.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@astramindapp/mcp-server",
+      "version": "0.5.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environment_variables": [
+        {
+          "name": "MIND_API_KEY",
+          "description": "Your MIND Developer API key (get one at m-i-n-d.ai)",
+          "required": true
+        },
+        {
+          "name": "MIND_BASE_URL",
+          "description": "MIND API base URL",
+          "required": false,
+          "default": "https://m-i-n-d.ai"
+        }
+      ]
+    }
+  ]
+}

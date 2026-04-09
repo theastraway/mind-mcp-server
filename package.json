@@ -1,0 +1,62 @@
+{
+  "name": "@astramindapp/mcp-server",
+  "version": "0.5.3",
+  "mcpName": "io.github.theastraway/mind",
+  "description": "MIND MCP Server — 15 tools, 89 actions. The most complete AI memory layer. Personal knowledge graph with emotional intelligence, CRM, life management, social, self-training, research agent, automations. Works with Claude, GPT, Gemini.",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "mind-mcp": "dist/cli.js",
+    "mind-mcp-setup": "dist/setup.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "lint": "eslint src/",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-memory",
+    "knowledge-graph",
+    "llm",
+    "mind",
+    "claude",
+    "claude-code",
+    "claude-desktop",
+    "cursor",
+    "ai-agent",
+    "persistent-memory",
+    "emotional-intelligence",
+    "crm",
+    "personal-ai",
+    "rag",
+    "mcp-server",
+    "ai-tools",
+    "knowledge-management"
+  ],
+  "author": "Astra AI <hello@theastraway.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theastraway/mind-mcp-server.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
+  }
+}
