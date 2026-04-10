@@ -312,4 +312,4 @@ MIND's technology is protected by multiple provisional patents including:
 
 ## License
 
-MIT — Astrai AI, Inc.
+MIT — Astra AI, Inc.
