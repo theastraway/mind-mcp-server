@@ -1,28 +1,44 @@
 # @astramindapp/mcp-server
 
-**MIND MCP Server** — The most complete AI memory layer available. 15 tools, 89 actions.
+**MIND MCP Server** — The most complete AI memory layer available. 31 tools, 208 actions.
 
 Your AI agents forget everything between sessions. MIND fixes that. Connect any MCP-compatible agent to your personal knowledge graph — with emotional intelligence, CRM, life management, social features, self-training, autonomous insights, and more.
 
-## 15 Tools
+## 31 Tools
 
 | Tool | Actions | What It Does |
 |------|---------|-------------|
 | `mind_query` | 1 | Semantic search across your knowledge graph (5 search modes) |
 | `mind_remember` | 5 | Store, search, get, list, delete — documents, entries, thoughts |
 | `mind_context` | 1 | Load persistent identity, preferences, rules, priorities, recent activity |
-| `mind_life` | 12 | Goals, projects, tasks + full calendar management + productivity stats |
+| `mind_focuses` | 5 | Top-level Focus buckets that group Life projects |
+| `mind_life` | 16 | Focus → Project → Outcome hierarchy + calendar + cross-account sharing + stats |
+| `mind_tasks` | 9 | Assignable, completable, reportable work items on Life/CRM/agents or standalone |
+| `mind_checklists` | 9 | Task-level checklists — templates, phase-bucketed steps, completion tracking |
 | `mind_crm` | 7 | Contacts, pipeline, activity logging, interaction history |
 | `mind_graph` | 3 | Graph stats, diagnostics, entity labels |
-| `mind_admin` | 7 | User provisioning, featured minds, tier/credit management |
+| `mind_admin` | 11 | User provisioning, Featured Minds Portal, tier/credit management (admin-only) |
 | `mind_sense` | 7 | MINDsense emotional intelligence — state, signals, timeline, KG weights, spikes |
-| `mind_research` | 3 | Launch autonomous deep research jobs |
+| `mind_research` | 3 | Launch and track autonomous deep research jobs |
 | `mind_train` | 7 | Self-training sessions + save chats to knowledge graph |
 | `mind_social` | 14 | Thoughts (posts), social feed, communities, likes, comments |
 | `mind_profile` | 9 | Profile, custom system prompts, LLM model selection |
 | `mind_insights` | 7 | Autonomous Learning Engine insights, weekly summaries, feedback |
 | `mind_automate` | 6 | Scheduled automations, event triggers, execution history |
 | `mind_notify` | 4 | Notifications, mark read, stats |
+| `mind_folders` | 7 | Organize documents into folders (a presentation layer over the graph) |
+| `mind_folder_routes` | 4 | Deterministic system-folder routing for auto-filed docs |
+| `mind_folder_suggest` | 1 | Ask MIND which folder a piece of content belongs in |
+| `mind_list_templates` | 1 | List the 16 MIND Front Layer template types |
+| `mind_get_template` | 1 | Fetch the full markdown spec for one Front Layer template |
+| `mind_save_typed` | 1 | Save a filled Front Layer document with its type tag |
+| `mind_bootstrap_templates` | 1 | Seed all 16 Front Layer templates into a tenant |
+| `mind_agents` | 25 | Admin-only Agent Command Center — registry, status, invoices, workflows |
+| `mind_tickets` | 7 | Agent ticket queue — file, triage, resolve client feedback/bugs |
+| `mind_accounts` | 6 | Manage multi-MIND accounts — list, create, delete, members, grant, invite |
+| `mind_social_analytics` | 6 | YouTube/LinkedIn/X/Twitch channel analytics from the Social Dashboard |
+| `mind_personas` | 17 | Influencer Factory Command Center — synthetic personas across Blotato platforms (admin-only) |
+| `mind_osint` | 7 | Operate Ozzie, the autonomous OSINT analyst — investigate targets, monitors, watchlists |
 
 ## Quick Start
 
@@ -258,6 +274,88 @@ Loads five structured sections at session start:
 | `create_featured_mind` | Create public featured mind |
 | `list_featured_minds`, `update_featured_mind` | Featured minds catalog |
 
+### `mind_focuses` — Focus Buckets
+
+| Action | Description |
+|--------|-------------|
+| `list`, `get` | View Focuses and their project counts |
+| `create`, `update`, `delete` | Maintain the top-level buckets that group Life projects |
+
+### `mind_tasks` — Site-Wide Tasks
+
+| Action | Description |
+|--------|-------------|
+| `list`, `create`, `get`, `update`, `delete` | Task CRUD — attach to a Life project, CRM contact, agent, or stand alone |
+| `complete`, `reopen` | Completion tracking |
+| `assign` | Assign to a MIND member, agent, or external email |
+| `reports` | Completion analytics |
+
+### `mind_checklists` — Task-Level Checklists
+
+| Action | Description |
+|--------|-------------|
+| `list_templates`, `get_template`, `create_template` | Reusable checklist blueprints (incl. global flagship templates) |
+| `list`, `create`, `get`, `delete` | Checklist runs attached to a task or Life item |
+| `toggle_item` | Check/uncheck a step |
+| `complete` | Finish a checklist and mirror it into the knowledge graph |
+
+### `mind_folders` — Document Folders
+
+| Action | Description |
+|--------|-------------|
+| `list`, `create`, `rename`, `delete` | Folder CRUD (a presentation layer — the graph still indexes across every document) |
+| `move`, `move_documents` | File documents into folders |
+| `set_hint` | Set the agent-routing hint read by `mind_folder_suggest` |
+
+### `mind_folder_routes` — System-Folder Routing
+
+| Action | Description |
+|--------|-------------|
+| `list`, `set`, `clear` | Configure which folder each kind of system-generated doc is filed into |
+| `apply_recommended` | Idempotent one-tap setup wiring every source type to a default folder |
+
+### `mind_folder_suggest` — Folder Suggestion
+
+Reads every folder's routing hint and uses a cheap LLM to pick the best match for a piece of content. Returns `folder_id=null` when nothing clearly applies.
+
+### `mind_list_templates` / `mind_get_template` / `mind_save_typed` / `mind_bootstrap_templates` — Front Layer Templates
+
+Four tools for MIND's 16 Front Layer document types (SOUL, IDENTITY, BELIEFS, USER, AGENTS, TOOLS, SENSES, SKILLS, BEHAVIOR, LESSON, DECISION, POLICY, WORKFLOW, PREFERENCE, GOAL, RELATIONSHIP): list the types, fetch a template's full spec, save a filled document with the correct type tag, or seed all 16 templates into a new tenant.
+
+### `mind_agents` — Agent Command Center (admin-only)
+
+Canonical registry of every Astra AI agent — status, current job, ownership/sharing (`transfer_owner`, `share`, `list_shares`, `revoke_share`), heartbeats, activity logs, and linked invoices/workflows. 25 actions.
+
+### `mind_tickets` — Agent Ticket Queue
+
+| Action | Description |
+|--------|-------------|
+| `list`, `get`, `create` | File and view client feedback, critiques, ideas, feature requests, and bugs on an agent |
+| `comment`, `update`, `resolve`, `delete` | Triage a ticket thread |
+
+### `mind_accounts` — Multi-MIND Accounts
+
+| Action | Description |
+|--------|-------------|
+| `list`, `create`, `delete` | Discover, spin up, or permanently remove a MIND account |
+| `members`, `grant`, `invite` | See who has access, grant it, or email an invitation |
+
+### `mind_social_analytics` — Social Dashboard
+
+YouTube/LinkedIn/X/Twitch channel stats, recent videos with performance, retention curves, traffic sources, comment sentiment, and goal progress.
+
+### `mind_personas` — Influencer Factory (admin-only)
+
+Synthetic-persona creators that publish across Blotato platforms: persona CRUD, AI-generated or user-uploaded face anchors, image-to-image face variants, ElevenLabs voice library/cloning, per-platform bios, and Blotato account registration.
+
+### `mind_osint` — Ozzie (OSINT Analyst)
+
+| Action | Description |
+|--------|-------------|
+| `investigate` | Get a cited intelligence dossier on a domain, IP, org, or person |
+| `add_monitor`, `list_monitors`, `remove_monitor` | Natural-language live-feed alerts |
+| `add_watchlist`, `list_watchlist`, `remove_watchlist` | Watchlist management |
+
 ## Partner Integration
 
 Partner apps can programmatically create MIND accounts using partner keys:
@@ -312,4 +410,4 @@ MIND's technology is protected by multiple provisional patents including:
 
 ## License
 
-MIT — Astra AI, Inc.
+MIT — Astra AI, LLC.
