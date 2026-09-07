@@ -2,17 +2,18 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.theastraway/mind",
   "title": "MIND",
-  "description": "Personal knowledge graph AI memory. 15 tools, 89 actions. Emotional intelligence, CRM, social.",
+  "description": "MIND MCP Server — 28 tools. Persistent AI memory: knowledge graph, LIFE tasks, CRM, 50+ models.",
+  "websiteUrl": "https://www.m-i-n-d.ai/mcp.html",
   "repository": {
     "url": "https://github.com/theastraway/mind-mcp-server",
     "source": "github"
   },
-  "version": "0.5.4",
+  "version": "0.23.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@astramindapp/mcp-server",
-      "version": "0.5.4",
+      "version": "0.23.0",
       "transport": {
         "type": "stdio"
       },
@@ -30,6 +31,12 @@
           "default": "https://m-i-n-d.ai"
         }
       ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://www.m-i-n-d.ai/mcp"
     }
   ]
 }
