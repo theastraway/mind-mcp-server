@@ -1,6 +1,6 @@
 {
   "name": "@astramindapp/mcp-server",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "mcpName": "io.github.theastraway/mind",
   "description": "MIND MCP Server — 31 tools. The most complete AI memory layer. Personal knowledge graph with emotional intelligence, CRM, life management, social, self-training, research agent, automations. Works with Claude, GPT, Gemini.",
   "files": [
@@ -10,6 +10,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "mcp-server": "dist/cli.js",
     "mind-mcp": "dist/cli.js",
     "mind-mcp-setup": "dist/setup.js"
   },

@@ -48,6 +48,21 @@ Sign up at [m-i-n-d.ai](https://m-i-n-d.ai) → Settings → Developer → Creat
 
 ### 2. Install
 
+No install needed — run it directly with `npx`:
+
+```bash
+npx -y @astramindapp/mcp-server
+```
+
+If your MCP client resolves the bin by package name instead (or you want the
+explicit form), you can also run:
+
+```bash
+npx -y --package=@astramindapp/mcp-server mind-mcp
+```
+
+Prefer a global install? That works too:
+
 ```bash
 npm install -g @astramindapp/mcp-server
 ```
@@ -57,8 +72,16 @@ npm install -g @astramindapp/mcp-server
 #### Claude Code
 
 ```bash
-claude mcp add mind -- env MIND_API_KEY=mind_xxx mind-mcp
+claude mcp add mind -- env MIND_API_KEY=mind_xxx npx -y @astramindapp/mcp-server
 ```
+
+Or, using the explicit package+bin form:
+
+```bash
+claude mcp add mind -- env MIND_API_KEY=mind_xxx npx -y --package=@astramindapp/mcp-server mind-mcp
+```
+
+If you installed globally (`npm install -g @astramindapp/mcp-server`), you can use the bin directly instead: `mind-mcp`.
 
 #### Claude Desktop
 
@@ -68,7 +91,24 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "mind": {
-      "command": "mind-mcp",
+      "command": "npx",
+      "args": ["-y", "@astramindapp/mcp-server"],
+      "env": {
+        "MIND_API_KEY": "mind_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Explicit package+bin form (equivalent):
+
+```json
+{
+  "mcpServers": {
+    "mind": {
+      "command": "npx",
+      "args": ["-y", "--package=@astramindapp/mcp-server", "mind-mcp"],
       "env": {
         "MIND_API_KEY": "mind_your_key_here"
       }
@@ -85,7 +125,42 @@ Add to `.cursor/mcp.json`:
 {
   "mcpServers": {
     "mind": {
-      "command": "mind-mcp",
+      "command": "npx",
+      "args": ["-y", "@astramindapp/mcp-server"],
+      "env": {
+        "MIND_API_KEY": "mind_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Explicit package+bin form (equivalent):
+
+```json
+{
+  "mcpServers": {
+    "mind": {
+      "command": "npx",
+      "args": ["-y", "--package=@astramindapp/mcp-server", "mind-mcp"],
+      "env": {
+        "MIND_API_KEY": "mind_your_key_here"
+      }
+    }
+  }
+}
+```
+
+#### Windsurf
+
+Add to your Windsurf MCP config (`~/.codeium/windsurf/mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "mind": {
+      "command": "npx",
+      "args": ["-y", "@astramindapp/mcp-server"],
       "env": {
         "MIND_API_KEY": "mind_your_key_here"
       }

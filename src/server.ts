@@ -29,7 +29,7 @@ import { MindClient } from "./mind-client.js";
 export function createMindMcpServer(client: MindClient): McpServer {
   const server = new McpServer({
     name: "mind",
-    version: "0.2.0",
+    version: "0.24.0",
   });
 
   // ─── mind_query ─────────────────────────────────────────

@@ -35,7 +35,7 @@ async function main() {
   await server.connect(transport);
 
   // Log to stderr so it doesn't interfere with MCP stdio protocol
-  console.error(`MIND MCP Server v0.1.0 started`);
+  console.error(`MIND MCP Server v0.24.0 started`);
   console.error(`  → Base URL: ${BASE_URL}`);
   console.error(`  → API Key: ${apiKey.slice(0, 8)}...`);
   console.error(`  → Tools: mind_query, mind_remember, mind_context, mind_life, mind_crm, mind_graph`);
