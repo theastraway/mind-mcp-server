@@ -132,7 +132,7 @@ Your AI Agent  <-->  MCP Protocol  <-->  MIND MCP Server  <-->  Personal Knowled
 | | Anthropic Official | Mem0 | Graphiti/Zep | MIND |
 |---|---|---|---|---|
 | Tools | 8 | 4 | 9 | **15** |
-| Knowledge graph | Basic (JSON) | No (vectors) | Yes (Neo4j) | **Yes (LightRAG)** |
+| Knowledge graph | Basic (JSON) | No (vectors) | Yes (Neo4j) | **Yes (native graph)** |
 | Emotional intelligence | No | No | No | **Yes (patented)** |
 | CRM | No | No | No | **Yes** |
 | Life management | No | No | No | **Yes** |
