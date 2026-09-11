@@ -1,0 +1,101 @@
+name: Publish to npm
+
+# npm publish is the FIRST link in the chain: publish-mcp-registry.yml fails
+# with "version 'X' was not found" until the version exists on npm. This
+# workflow publishes to npm, then triggers the registry publish.
+#
+# AUTH — two supported paths, no long-lived token on a laptop:
+#   1. Trusted Publishing (preferred, no secret at all). Configure once at
+#      npmjs.com → @astramindapp/mcp-server → Settings → Trusted Publisher,
+#      pointing at this repo and workflow file. OIDC then authenticates.
+#   2. Fallback: add an NPM_TOKEN repo secret (automation token). Used only
+#      when it is set, so path 1 keeps working with no secret present.
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC — required for Trusted Publishing
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted Publishing needs npm >= 11.5.1; the bundled npm is older.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify bin aliases resolve before publishing
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const bins = Object.keys(p.bin || {});
+            const required = ['mcp-server', 'mind-mcp', 'mind-mcp-setup'];
+            const missing = required.filter(b => !bins.includes(b));
+            if (missing.length) {
+              console.error('Missing bin aliases: ' + missing.join(', '));
+              process.exit(1);
+            }
+            // npx -y <pkg> resolves the bin named after the package's LAST
+            // path segment. Without it, npx fails 'could not determine
+            // executable to run' — the bug this alias exists to prevent.
+            const segment = p.name.split('/').pop();
+            if (!bins.includes(segment)) {
+              console.error('No bin named ' + segment + ' — npx -y ' + p.name + ' will fail');
+              process.exit(1);
+            }
+            console.log('bin aliases OK: ' + bins.join(', '));
+          "
+
+      - name: Publish
+        run: npm publish --access public
+        env:
+          # Empty when using Trusted Publishing; npm falls back to OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Confirm the version is live on the registry
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          for i in $(seq 1 20); do
+            if npm view "@astramindapp/mcp-server@$VERSION" version >/dev/null 2>&1; then
+              echo "✓ @astramindapp/mcp-server@$VERSION is live on npm"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "✗ version $VERSION did not appear on the registry"
+          exit 1
+
+  # Only meaningful once npm has the version — that is why it is gated on
+  # the publish job rather than run in parallel.
+  registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
