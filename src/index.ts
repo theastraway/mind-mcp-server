@@ -6,7 +6,7 @@
  *
  * Programmatic usage:
  *   import { createMindMcpServer, MindClient } from "@mindapp/mcp-server";
- *   const client = new MindClient({ baseUrl: "https://m-i-n-d.ai", apiKey: "mind_xxx" });
+ *   const client = new MindClient({ baseUrl: "https://www.m-i-n-d.ai", apiKey: "mind_xxx" });
  *   const server = createMindMcpServer(client);
  */
 

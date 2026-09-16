@@ -3,16 +3,31 @@
  * MIND MCP Server — Interactive Setup Wizard
  *
  * Usage:
- *   npx @mindapp/mcp-server setup
- *   mind-mcp-setup
+ *   npx -y --package=@astramindapp/mcp-server mind-mcp-setup
+ *   mind-mcp-setup            Browser connect (default) — opens m-i-n-d.ai,
+ *                             click "Connect", key arrives automatically
+ *   mind-mcp-setup --key      Manual mode — paste an API key instead
+ *   mind-mcp-setup --key <k>  Manual mode with the key inline
+ *   mind-mcp-setup --help     Show usage and exit (no wizard)
  *
  * Auto-detects installed AI tools and configures MIND as their memory layer.
+ *
+ * NON-INTERACTIVE / AGENT SAFETY: this wizard's default mode opens a browser
+ * and blocks waiting for a human click — fine for a person at a terminal,
+ * fatal for an AI agent in a non-TTY shell (it would hang forever). When
+ * stdin is not a TTY, or `CI` is set, or `MIND_NONINTERACTIVE=1`, and no key
+ * was resolved from `--key` or `MIND_API_KEY`, the wizard prints the
+ * non-interactive options and exits with code 2 instead of opening a
+ * browser or blocking on a readline prompt. If a key WAS resolved (inline
+ * `--key <value>` or `MIND_API_KEY` in the environment), it proceeds and
+ * writes every detected tool's config without prompting.
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import * as readline from "readline";
+import { connectViaBrowser } from "./oauth-connect.js";
 
 const HOME = os.homedir();
 
@@ -133,6 +148,51 @@ function printHeader() {
   print("");
 }
 
+function printUsage() {
+  print("MIND MCP Server Setup");
+  print("");
+  print("Usage:");
+  print("  mind-mcp-setup            Run setup — browser connect by default");
+  print("                            (opens m-i-n-d.ai, click \"Connect\", done)");
+  print("  mind-mcp-setup --key      Paste an API key manually instead");
+  print("  mind-mcp-setup --key <k>  Manual mode with the key inline");
+  print("  mind-mcp-setup setup      Same as the default");
+  print("  mind-mcp-setup --help     Show this help and exit");
+  print("");
+  print("Non-interactive shells (CI, agents, piped stdin) never open a");
+  print("browser or block on a prompt. Pass --key, or set MIND_API_KEY, or");
+  print("connect remotely with no install at all:");
+  print("  claude mcp add --transport http mind https://www.m-i-n-d.ai/mcp");
+}
+
+function isNonInteractive(): boolean {
+  return (
+    !process.stdin.isTTY ||
+    Boolean(process.env.CI) ||
+    process.env.MIND_NONINTERACTIVE === "1"
+  );
+}
+
+function printNonInteractiveHelp() {
+  print("");
+  print("══════════════════════════════════════════");
+  print("Non-interactive shell detected");
+  print("══════════════════════════════════════════");
+  print("");
+  print("This wizard's default mode opens a browser and waits for a click —");
+  print("that never completes in a non-interactive shell (CI, an agent, or");
+  print("piped stdin), so no browser was opened and nothing is blocking.");
+  print("");
+  print("Pick one:");
+  print("  1. Remote, no install:");
+  print("     claude mcp add --transport http mind https://www.m-i-n-d.ai/mcp");
+  print("  2. Local stdio setup with a key:");
+  print("     npx -y --package=@astramindapp/mcp-server mind-mcp-setup --key <mind_...>");
+  print("  3. Mint a key at:");
+  print("     https://m-i-n-d.ai → Settings → Developer → API Keys");
+  print("");
+}
+
 // ─── Config Writing ───────────────────────────────────────
 
 function getMindServerConfig(apiKey: string): Record<string, unknown> {
@@ -214,26 +274,88 @@ async function validateApiKey(
 // ─── Main ─────────────────────────────────────────────────
 
 async function main() {
+  const argv = process.argv.slice(2);
+
+  if (argv.includes("--help") || argv.includes("-h")) {
+    printUsage();
+    process.exit(0);
+    return;
+  }
+
   printHeader();
 
+  const nonInteractive = isNonInteractive();
   const rl = createRL();
 
-  // Step 1: API Key
+  // Step 1: API Key — default is browser OAuth; --key switches to manual paste
   print("Step 1: Connect to your MIND");
   print("─────────────────────────────");
-  print("You need a MIND API key. Get one at: https://m-i-n-d.ai → Settings → Developer → API Keys");
-  print("");
 
-  let apiKey = process.env.MIND_API_KEY ?? "";
-  if (apiKey) {
-    print(`Found MIND_API_KEY in environment: ${apiKey.slice(0, 12)}...`);
-    const useExisting = await ask(rl, "Use this key? (Y/n): ");
-    if (useExisting.toLowerCase() === "n") {
-      apiKey = "";
+  const baseUrl = process.env.MIND_BASE_URL ?? "https://www.m-i-n-d.ai";
+  const keyFlagIndex = argv.indexOf("--key");
+  const manualMode = keyFlagIndex !== -1;
+
+  let apiKey = "";
+
+  // --key <value> inline
+  if (manualMode) {
+    const flagValue = argv[keyFlagIndex + 1];
+    if (flagValue && !flagValue.startsWith("--") && flagValue !== "setup") {
+      apiKey = flagValue.trim();
     }
   }
 
+  // Existing MIND_API_KEY in the environment (kept as a convenience path)
   if (!apiKey) {
+    const envKey = process.env.MIND_API_KEY ?? "";
+    if (envKey) {
+      if (nonInteractive) {
+        print(`Using MIND_API_KEY from environment: ${envKey.slice(0, 12)}... (non-interactive, no prompt)`);
+        apiKey = envKey;
+      } else {
+        print(`Found MIND_API_KEY in environment: ${envKey.slice(0, 12)}...`);
+        const useExisting = await ask(rl, "Use this key? (Y/n): ");
+        apiKey = useExisting.toLowerCase() === "n" ? "" : envKey;
+      }
+    }
+  }
+
+  // DEFAULT: browser OAuth — one click on m-i-n-d.ai, key arrives automatically.
+  // Never attempted in a non-interactive shell — it would open nothing
+  // useful and block on a click that can never come.
+  if (!apiKey && !manualMode) {
+    if (nonInteractive) {
+      printNonInteractiveHelp();
+      rl.close();
+      process.exit(2);
+      return;
+    }
+    print("Connecting via your browser — sign in to m-i-n-d.ai and click \"Connect\".");
+    print("(Prefer to paste a key instead? Re-run with --key)");
+    print("");
+    try {
+      apiKey = await connectViaBrowser(baseUrl);
+      print("");
+      print(`✅ Connected! Received your MIND API key automatically: ${apiKey.slice(0, 12)}...`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      print(`\n⚠️  Browser connect failed: ${message}`);
+      print("Or paste an API key from m-i-n-d.ai Settings → Developer:");
+    }
+  }
+
+  // Manual fallback (also the --key path when no inline value was given).
+  // Never blocks on a readline prompt in a non-interactive shell.
+  if (!apiKey) {
+    if (nonInteractive) {
+      printNonInteractiveHelp();
+      rl.close();
+      process.exit(2);
+      return;
+    }
+    if (manualMode) {
+      print("Get a key at: https://m-i-n-d.ai → Settings → Developer → API Keys");
+    }
     apiKey = await ask(rl, "Paste your MIND API key: ");
   }
 
@@ -241,19 +363,24 @@ async function main() {
     print("\n❌ No API key provided. Exiting.");
     rl.close();
     process.exit(1);
+    return;
   }
 
   // Validate
-  const baseUrl = process.env.MIND_BASE_URL ?? "https://m-i-n-d.ai";
   print("\nValidating API key...");
   const validation = await validateApiKey(apiKey, baseUrl);
 
   if (!validation.valid) {
     print(`\n⚠️  Could not validate key: ${validation.error}`);
-    const proceed = await ask(rl, "Continue anyway? (y/N): ");
-    if (proceed.toLowerCase() !== "y") {
-      rl.close();
-      process.exit(1);
+    if (nonInteractive) {
+      print("Non-interactive shell — proceeding with the provided key anyway.");
+    } else {
+      const proceed = await ask(rl, "Continue anyway? (y/N): ");
+      if (proceed.toLowerCase() !== "y") {
+        rl.close();
+        process.exit(1);
+        return;
+      }
     }
   } else {
     print("✅ API key is valid!\n");
@@ -290,8 +417,12 @@ async function main() {
   const configured: string[] = [];
 
   for (const tool of detected) {
-    const answer = await ask(rl, `Add MIND to ${tool.name}? (Y/n): `);
-    if (answer.toLowerCase() === "n") {
+    let proceed = true;
+    if (!nonInteractive) {
+      const answer = await ask(rl, `Add MIND to ${tool.name}? (Y/n): `);
+      proceed = answer.toLowerCase() !== "n";
+    }
+    if (!proceed) {
       print(`  ⏭️  Skipped ${tool.name}`);
       continue;
     }
@@ -305,20 +436,23 @@ async function main() {
     }
   }
 
-  // Also offer non-detected tools
-  for (const tool of notDetected) {
-    const answer = await ask(
-      rl,
-      `Configure MIND for ${tool.name} anyway? (y/N): `
-    );
-    if (answer.toLowerCase() !== "y") continue;
+  // Also offer non-detected tools (interactive only — non-interactive runs
+  // default to NOT writing config for tools that were never detected).
+  if (!nonInteractive) {
+    for (const tool of notDetected) {
+      const answer = await ask(
+        rl,
+        `Configure MIND for ${tool.name} anyway? (y/N): `
+      );
+      if (answer.toLowerCase() !== "y") continue;
 
-    const result = writeToolConfig(tool, apiKey);
-    if (result.success) {
-      print(`  ✅ ${tool.name} configured!`);
-      configured.push(tool.name);
-    } else {
-      print(`  ❌ Failed: ${result.error}`);
+      const result = writeToolConfig(tool, apiKey);
+      if (result.success) {
+        print(`  ✅ ${tool.name} configured!`);
+        configured.push(tool.name);
+      } else {
+        print(`  ❌ Failed: ${result.error}`);
+      }
     }
   }
 
@@ -339,7 +473,7 @@ async function main() {
     print("   (Fully quit and reopen — not just close the window)");
   } else {
     print("No tools configured. You can run this again anytime:");
-    print("  npx @mindapp/mcp-server setup");
+    print("  npx -y --package=@astramindapp/mcp-server mind-mcp-setup");
   }
 
   print("");
@@ -350,23 +484,7 @@ async function main() {
   rl.close();
 }
 
-// Entry point
-const args = process.argv.slice(2);
-if (args.includes("setup") || args.includes("--setup")) {
-  main().catch((err) => {
-    console.error("Setup failed:", err);
-    process.exit(1);
-  });
-} else {
-  // If called directly without "setup", show help
-  print("MIND MCP Server Setup");
-  print("");
-  print("Usage:");
-  print("  mind-mcp-setup          Run interactive setup wizard");
-  print("  mind-mcp-setup setup    Same as above");
-  print("");
-  main().catch((err) => {
-    console.error("Setup failed:", err);
-    process.exit(1);
-  });
-}
+main().catch((err) => {
+  console.error("Setup failed:", err);
+  process.exit(1);
+});

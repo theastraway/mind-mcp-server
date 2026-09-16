@@ -1,0 +1,81 @@
+{
+  "manifest_version": "0.4",
+  "name": "mind",
+  "display_name": "MIND",
+  "version": "0.25.0",
+  "description": "Persistent AI memory and personal knowledge graph. Query, remember, and manage your MIND from Claude Desktop — memory, tasks, contacts, research, and more.",
+  "long_description": "MIND is a personal knowledge graph AI memory platform. This bundle connects Claude Desktop to your MIND knowledge graph over stdio, giving Claude persistent memory across every conversation: query your knowledge graph, store memories and decisions, manage tasks and goals (Focus → Project → Outcome → Task), track contacts and CRM, run deep research, read your emotional context, and more — all backed by your own MIND account at m-i-n-d.ai.\n\nGet a MIND API key at https://m-i-n-d.ai → Settings → Developer → API Keys, install this bundle, paste your key when prompted, and Claude Desktop has full access to your MIND.",
+  "author": {
+    "name": "Astra AI",
+    "email": "hello@theastraway.com",
+    "url": "https://www.theastraway.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theastraway/mind-mcp-server.git"
+  },
+  "homepage": "https://www.m-i-n-d.ai",
+  "documentation": "https://www.m-i-n-d.ai/mcp.html",
+  "support": "https://www.m-i-n-d.ai/mcp.html",
+  "icon": "icon.png",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-memory",
+    "knowledge-graph",
+    "mind",
+    "claude",
+    "claude-desktop",
+    "persistent-memory",
+    "crm",
+    "personal-ai"
+  ],
+  "license": "MIT",
+  "server": {
+    "type": "node",
+    "entry_point": "server/cli.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/cli.js"],
+      "env": {
+        "MIND_API_KEY": "${user_config.mind_api_key}",
+        "MIND_BASE_URL": "${user_config.mind_base_url}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "mind_query", "description": "Search your MIND knowledge graph — semantic + graph reasoning over your stored documents, entries, and feed posts." },
+    { "name": "mind_remember", "description": "Store facts, decisions, learnings, and research into your MIND knowledge graph." },
+    { "name": "mind_context", "description": "Load identity, operating rules, priorities, and recent activity from MIND." },
+    { "name": "mind_life", "description": "Manage Focus → Project → Outcome → Task hierarchy — MIND's life/task management surface." },
+    { "name": "mind_crm", "description": "Track contacts, log activity, and manage relationships in MIND's CRM." },
+    { "name": "mind_graph", "description": "Inspect knowledge graph stats — entity count, relationship density, graph health." },
+    { "name": "mind_research", "description": "Run a deep research agent against a topic and store the synthesized findings." },
+    { "name": "mind_tasks", "description": "Create, update, and complete standalone tasks tracked in MIND." }
+  ],
+  "tools_generated": true,
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "user_config": {
+    "mind_api_key": {
+      "type": "string",
+      "title": "MIND API Key",
+      "description": "Get your key at m-i-n-d.ai → Settings → Developer → API Keys",
+      "required": true,
+      "sensitive": true
+    },
+    "mind_base_url": {
+      "type": "string",
+      "title": "MIND Base URL",
+      "description": "Optional — only set this if you run a self-hosted MIND instance. Leave default for the standard m-i-n-d.ai account.",
+      "required": false,
+      "default": "https://www.m-i-n-d.ai",
+      "sensitive": false
+    }
+  }
+}
