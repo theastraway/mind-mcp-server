@@ -409,19 +409,32 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_folders",
-    "Organize your MIND documents into folders. Folders are a presentation layer — the knowledge graph still indexes and retrieves across every document regardless of folder. Use mind_remember to create a document, then mind_folders move_documents to file it. Actions: list, create, rename, move, delete, move_documents, set_hint (set the agent-routing hint read by mind_folder_suggest).",
+    "Organize your MIND documents into folders. Folders are a presentation layer — the knowledge graph still indexes and retrieves across every document regardless of folder. Use mind_remember to create a document, then mind_folders move_documents to file it. Actions: list, create, rename, move, delete, move_documents, set_hint, secure, unsecure, unlock, reset_request, reset (Secure Folders — password-gate a folder).",
     {
       action: z
-        .enum(["list", "create", "rename", "move", "delete", "move_documents", "set_hint"])
+        .enum([
+          "list",
+          "create",
+          "rename",
+          "move",
+          "delete",
+          "move_documents",
+          "set_hint",
+          "secure",
+          "unsecure",
+          "unlock",
+          "reset_request",
+          "reset",
+        ])
         .describe(
-          "list (all folders + counts + routing hints), create (new folder; pass routing_hint to enable agent-routing), rename (change a folder's name), move (re-nest a folder), delete (remove a folder — its documents and subfolders move up a level, nothing is deleted), move_documents (file documents into a folder), set_hint (write/clear the routing_hint that mind_folder_suggest reads)",
+          "list (all folders + counts + routing hints + secure/locked flags), create (new folder; pass routing_hint to enable agent-routing), rename (change a folder's name), move (re-nest a folder), delete (remove a folder — its documents and subfolders move up a level, nothing is deleted), move_documents (file documents into a folder), set_hint (write/clear the routing_hint that mind_folder_suggest reads), secure (password-gate folder_id — pass passphrase; changing an existing passphrase needs an active unlock first), unsecure (turn off secure mode — needs an active unlock), unlock (verify passphrase, mints a 15-minute unlock kept in memory for this session and sent on every later call), reset_request (email a one-time reset link to the account email), reset (complete a reset — pass token + new_passphrase)",
         ),
       name: z.string().optional().describe("Folder name — required for create and rename"),
       folder_id: z
         .string()
         .optional()
         .describe(
-          "Folder id — the folder to rename/move/delete/set_hint, or the destination for move_documents (omit or pass 'root' to file documents at the top level)",
+          "Folder id — the folder to rename/move/delete/set_hint/secure/unsecure/unlock/reset_request/reset, or the destination for move_documents (omit or pass 'root' to file documents at the top level)",
         ),
       parent_id: z
         .string()
@@ -437,8 +450,20 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .describe(
           "Free-text instruction answering \"when should MIND save things to this folder?\". Read by mind_folder_suggest to LLM-route new content. Pass on create to set up-front; pass on set_hint to update. Pass empty string to clear (disables the folder from auto-routing).",
         ),
+      passphrase: z
+        .string()
+        .optional()
+        .describe("Folder passphrase — required for secure and unlock"),
+      new_passphrase: z
+        .string()
+        .optional()
+        .describe("New passphrase — required for reset"),
+      token: z
+        .string()
+        .optional()
+        .describe("One-time reset token from the reset email — required for reset"),
     },
-    async ({ action, name, folder_id, parent_id, doc_ids, routing_hint }) => {
+    async ({ action, name, folder_id, parent_id, doc_ids, routing_hint, passphrase, new_passphrase, token }) => {
       try {
         switch (action) {
           case "list": {
@@ -458,7 +483,8 @@ export function createMindMcpServer(client: MindClient): McpServer {
               const parent = f.parent_id ? byId.get(f.parent_id)?.name ?? "?" : "(top level)";
               const hint = (f.routing_hint || "").trim();
               const hintTail = hint ? ` · hint: ${hint.length > 80 ? hint.slice(0, 80) + "…" : hint}` : "";
-              return `• ${f.name} — ${f.document_count ?? 0} doc(s) · id: ${f.id} · parent: ${parent}${hintTail}`;
+              const secureTail = f.secure ? (f.locked ? " · 🔒 secure (locked)" : " · 🔓 secure (unlocked)") : "";
+              return `• ${f.name} — ${f.document_count ?? 0} doc(s) · id: ${f.id} · parent: ${parent}${hintTail}${secureTail}`;
             });
             return {
               content: [
@@ -545,6 +571,64 @@ export function createMindMcpServer(client: MindClient): McpServer {
                     ? `Cleared routing hint on "${res.folder.name}" — folder is no longer auto-routed.`
                     : `Routing hint set on "${res.folder.name}". mind_folder_suggest will now consider this folder.`,
                 },
+              ],
+            };
+          }
+          case "secure": {
+            if (!folder_id) throw new Error("'folder_id' is required to secure a folder");
+            if (!passphrase) throw new Error("'passphrase' is required to secure a folder");
+            const res = await client.secureFolder(folder_id, passphrase);
+            return {
+              content: [
+                { type: "text" as const, text: `Folder ${res.folder_id} is now secure. Unlock it with action 'unlock' before reading its contents.` },
+              ],
+            };
+          }
+          case "unsecure": {
+            if (!folder_id) throw new Error("'folder_id' is required to unsecure a folder");
+            const res = await client.unsecureFolder(folder_id);
+            client.clearSecureFolderUnlockToken(folder_id);
+            return {
+              content: [{ type: "text" as const, text: `Folder ${res.folder_id} is no longer secure.` }],
+            };
+          }
+          case "unlock": {
+            if (!folder_id) throw new Error("'folder_id' is required to unlock a folder");
+            if (!passphrase) throw new Error("'passphrase' is required to unlock a folder");
+            const res = await client.unlockFolder(folder_id, passphrase);
+            client.setSecureFolderUnlockToken(folder_id, res.unlock_token);
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Unlocked. Expires at ${res.expires_at} (15 minutes) — every mind_query / mind_folders / document call this session will see inside it until then.`,
+                },
+              ],
+            };
+          }
+          case "reset_request": {
+            if (!folder_id) throw new Error("'folder_id' is required to request a passphrase reset");
+            const res = await client.requestFolderReset(folder_id);
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: res.status === "sent"
+                    ? `Reset email sent to the account's email address (expires in 15 minutes).`
+                    : `Reset requested, but email delivery is not configured on this deployment.`,
+                },
+              ],
+            };
+          }
+          case "reset": {
+            if (!folder_id) throw new Error("'folder_id' is required to reset a passphrase");
+            if (!token) throw new Error("'token' (from the reset email) is required to reset a passphrase");
+            if (!new_passphrase) throw new Error("'new_passphrase' is required to reset a passphrase");
+            const res = await client.resetFolder(folder_id, token, new_passphrase);
+            client.clearSecureFolderUnlockToken(folder_id);
+            return {
+              content: [
+                { type: "text" as const, text: `Passphrase reset for folder ${res.folder_id}. Unlock it with the new passphrase.` },
               ],
             };
           }

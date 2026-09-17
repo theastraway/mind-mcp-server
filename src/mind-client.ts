@@ -56,6 +56,10 @@ export interface FolderResponse {
   document_count?: number;
   /** Free-text instruction read by the LLM folder router (POST /v1/folders/suggest). */
   routing_hint?: string;
+  /** True when this folder itself is password-gated (Secure Folders). */
+  secure?: boolean;
+  /** True when this folder (or an ancestor) is currently gated for this key. */
+  locked?: boolean;
 }
 
 export interface FolderRouteCategory {
@@ -547,10 +551,27 @@ export class MindApiError extends Error {
 export class MindClient {
   private baseUrl: string;
   private apiKey: string;
+  // Secure Folders: unlock tokens (one per folder_id) live in memory for the
+  // life of this MCP server process only -- never persisted to disk, never
+  // remembered across a restart. Every request rides along whatever is
+  // still live; an expired-on-the-server token is simply ignored there.
+  private secureUnlockTokens: Map<string, string> = new Map();
 
   constructor(config: MindClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.apiKey = config.apiKey;
+  }
+
+  /** Record a folder's unlock token so subsequent calls this session can
+   * see inside it. Call after a successful `unlockFolder`. */
+  setSecureFolderUnlockToken(folderId: string, token: string): void {
+    this.secureUnlockTokens.set(folderId, token);
+  }
+
+  /** Forget a folder's unlock token (explicit relock, or the folder was
+   * unsecured/reset). */
+  clearSecureFolderUnlockToken(folderId: string): void {
+    this.secureUnlockTokens.delete(folderId);
   }
 
   private async request<T>(
@@ -569,6 +590,9 @@ export class MindClient {
       "X-API-Key": this.apiKey,
       "Content-Type": "application/json",
     };
+    if (this.secureUnlockTokens.size > 0) {
+      headers["X-Unlock-Token"] = Array.from(this.secureUnlockTokens.values()).join(",");
+    }
 
     const res = await fetch(url, {
       method,
@@ -701,6 +725,43 @@ export class MindClient {
     documents_reparented: number;
   }> {
     return this.request("DELETE", `/developer/v1/folders/${folderId}`);
+  }
+
+  // ─── Secure Folders ───────────────────────────────────────
+  // Password-gate a folder. The API key needs the `secure:read` scope to
+  // ever see inside one, even with a valid unlock token.
+
+  async secureFolder(folderId: string, passphrase: string): Promise<{ status: string; folder_id: string }> {
+    return this.request("POST", `/developer/v1/folders/${folderId}/secure`, { passphrase });
+  }
+
+  async unsecureFolder(folderId: string): Promise<{ status: string; folder_id: string }> {
+    return this.request("DELETE", `/developer/v1/folders/${folderId}/secure`);
+  }
+
+  /** Verify the passphrase and mint a 15-minute unlock token. On success,
+   * call `setSecureFolderUnlockToken` so subsequent calls this session see
+   * inside the folder automatically. */
+  async unlockFolder(
+    folderId: string,
+    passphrase: string,
+  ): Promise<{ unlock_token: string; expires_at: string; folder_id: string }> {
+    return this.request("POST", `/developer/v1/folders/${folderId}/unlock`, { passphrase });
+  }
+
+  async requestFolderReset(folderId: string): Promise<{ status: string; expires_at?: string }> {
+    return this.request("POST", `/developer/v1/folders/${folderId}/secure/reset-request`, {});
+  }
+
+  async resetFolder(
+    folderId: string,
+    token: string,
+    newPassphrase: string,
+  ): Promise<{ status: string; folder_id: string }> {
+    return this.request("POST", `/developer/v1/folders/${folderId}/secure/reset`, {
+      token,
+      new_passphrase: newPassphrase,
+    });
   }
 
   /** Move documents into a folder, or to the top level (`folderId` = null). */
