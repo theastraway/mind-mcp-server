@@ -578,7 +578,8 @@ export class MindClient {
     method: string,
     path: string,
     body?: unknown,
-    params?: Record<string, string>
+    params?: Record<string, string>,
+    unlockTokenOverride?: string
   ): Promise<T> {
     let url = `${this.baseUrl}${path}`;
     if (params) {
@@ -590,7 +591,13 @@ export class MindClient {
       "X-API-Key": this.apiKey,
       "Content-Type": "application/json",
     };
-    if (this.secureUnlockTokens.size > 0) {
+    // An explicit unlock_token argument (carried in from the hosted-MCP-style
+    // tool call) always wins over whatever this session has remembered in
+    // secureUnlockTokens, so the stdio and hosted servers accept identical
+    // input instead of diverging on which token applies.
+    if (unlockTokenOverride) {
+      headers["X-Unlock-Token"] = unlockTokenOverride;
+    } else if (this.secureUnlockTokens.size > 0) {
       headers["X-Unlock-Token"] = Array.from(this.secureUnlockTokens.values()).join(",");
     }
 
@@ -731,12 +738,20 @@ export class MindClient {
   // Password-gate a folder. The API key needs the `secure:read` scope to
   // ever see inside one, even with a valid unlock token.
 
-  async secureFolder(folderId: string, passphrase: string): Promise<{ status: string; folder_id: string }> {
-    return this.request("POST", `/developer/v1/folders/${folderId}/secure`, { passphrase });
+  /** `unlockToken`, when passed, overrides whatever this session has
+   * remembered for the folder — lets a caller carry an explicit
+   * `unlock_token` argument (matching the hosted MCP's stateless-per-call
+   * shape) instead of relying on the in-memory map. */
+  async secureFolder(
+    folderId: string,
+    passphrase: string,
+    unlockToken?: string,
+  ): Promise<{ status: string; folder_id: string }> {
+    return this.request("POST", `/developer/v1/folders/${folderId}/secure`, { passphrase }, undefined, unlockToken);
   }
 
-  async unsecureFolder(folderId: string): Promise<{ status: string; folder_id: string }> {
-    return this.request("DELETE", `/developer/v1/folders/${folderId}/secure`);
+  async unsecureFolder(folderId: string, unlockToken?: string): Promise<{ status: string; folder_id: string }> {
+    return this.request("DELETE", `/developer/v1/folders/${folderId}/secure`, undefined, undefined, unlockToken);
   }
 
   /** Verify the passphrase and mint a 15-minute unlock token. On success,

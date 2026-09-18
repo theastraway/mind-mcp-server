@@ -496,8 +496,14 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .string()
         .optional()
         .describe("One-time reset token from the reset email — required for reset"),
+      unlock_token: z
+        .string()
+        .optional()
+        .describe(
+          "Pass the exact `unlock_token` string returned by a prior 'unlock' call here to carry a 15-minute unlock into a later 'secure' (passphrase change) or 'unsecure' call. Not needed for the first time a folder is secured, and not used by list/create/rename/move/delete/move_documents/set_hint/unlock/reset_request/reset. This stdio server keeps unlock tokens in memory for the whole session and normally attaches them automatically (see 'unlock'), so passing this explicitly is usually redundant — but when supplied it takes precedence over the remembered token, so the same request shape works on both this server and the hosted MCP.",
+        ),
     },
-    async ({ action, name, folder_id, parent_id, doc_ids, routing_hint, passphrase, new_passphrase, token }) => {
+    async ({ action, name, folder_id, parent_id, doc_ids, routing_hint, passphrase, new_passphrase, token, unlock_token }) => {
       try {
         switch (action) {
           case "list": {
@@ -611,7 +617,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
           case "secure": {
             if (!folder_id) throw new Error("'folder_id' is required to secure a folder");
             if (!passphrase) throw new Error("'passphrase' is required to secure a folder");
-            const res = await client.secureFolder(folder_id, passphrase);
+            const res = await client.secureFolder(folder_id, passphrase, unlock_token);
             return {
               content: [
                 { type: "text" as const, text: `Folder ${res.folder_id} is now secure. Unlock it with action 'unlock' before reading its contents.` },
@@ -620,7 +626,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
           }
           case "unsecure": {
             if (!folder_id) throw new Error("'folder_id' is required to unsecure a folder");
-            const res = await client.unsecureFolder(folder_id);
+            const res = await client.unsecureFolder(folder_id, unlock_token);
             client.clearSecureFolderUnlockToken(folder_id);
             return {
               content: [{ type: "text" as const, text: `Folder ${res.folder_id} is no longer secure.` }],
