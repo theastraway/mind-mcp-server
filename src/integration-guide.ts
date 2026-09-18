@@ -60,6 +60,43 @@ export function buildSyncLocalDocsPrompt(args: { root?: string; dry_run?: string
   return `${modeLine}\n${sinceLine}\n\n${SYNC_LOCAL_DOCS_PROMPT_BODY.replace(/\{\{root\}\}/g, root)}`;
 }
 
+// ─── Agent Session Protocol ─────────────────────────────────
+// "Agent Sessions in MIND Chat" — every external agent (Claude Code, Codex,
+// Cursor, Grokbot, OpenClaw...) logs its live session into MIND Chat as a
+// tagged Agent Session via the mind_sessions tool
+// (backend/routes/agent_session_routes.py, prefix
+// /developer/v1/agent-sessions). This body is the SINGLE canonical copy of
+// the protocol — verbatim in SERVER_INSTRUCTIONS below (the "═══ AGENT
+// SESSION PROTOCOL ═══" block), embedded (compact) in the mind_sessions tool
+// description (server.ts), rendered by the sync-agent-session MCP prompt
+// (buildSyncAgentSessionPrompt, below), and mirrored into a MIND document —
+// so a client that only reads tool descriptions still follows it.
+export const AGENT_SESSION_PROTOCOL_BODY = `═══ AGENT SESSION PROTOCOL — every agent, every session ═══
+MIND is the system of record for your sessions. Anthony reads and replies to them in MIND Chat → Agents.
+1. CONNECT: as soon as mind_context succeeds, call mind_sessions action=open with source_key=<your assigned toggle, e.g. "claude-code-1">, external_session_id=<your runtime's own session id>, runtime, title (first user ask, 6-10 words), machine, cwd, repo, branch, model. If \`resumed\` is true you are continuing an earlier session: read \`tail\` before answering. Treat every item in \`pending_replies\` as a user message that arrived while you were away — answer them FIRST.
+2. EVERY TURN: after you finish a reply, call mind_sessions action=append with the user's message and your final reply (role user / assistant). Tool calls go in as role=tool one-line summaries, never raw payloads. Check \`pending_replies\` on the response and answer them in your next reply.
+3. IDLE: MIND marks you idle after 30 minutes without an append. Nothing to do; the next append revives the session.
+4. TERMINATE: on exit, compaction, or "done", call mind_sessions action=close with a summary (what was asked, what shipped with ids and PR numbers, what is still undone). MIND mirrors the session into your Sessions folder as a document.
+5. HANDOFF: to pass work to another agent, mind_sessions action=handoff to_source_key=<their toggle>; they will find it in their list with the transcript as context.
+6. Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads into a session.`;
+
+/**
+ * Builds the sync-agent-session prompt text: a one-line intro naming the
+ * calling agent's runtime and a suggested source_key, followed by the full
+ * (verbatim, unmodified) AGENT_SESSION_PROTOCOL_BODY. MCP prompt arguments
+ * are always strings. Kept intentionally simple (independent defaults, no
+ * derived values) so export-catalog.mjs can extract a byte-identical
+ * template with two plain sentinel substitutions — see
+ * PROMPT_TEMPLATE_BUILDERS / buildSyncAgentSessionTemplate there.
+ */
+export function buildSyncAgentSessionPrompt(args: { runtime?: string; source_key?: string }): string {
+  const runtime = args.runtime && args.runtime.trim().length > 0 ? args.runtime.trim() : "your runtime";
+  const sourceKey =
+    args.source_key && args.source_key.trim().length > 0 ? args.source_key.trim() : "your-source-key";
+  const intro = `You are integrating as runtime "${runtime}" (suggested source_key: "${sourceKey}" — use the toggle Anthony actually assigned you if it differs).`;
+  return `${intro}\n\n${AGENT_SESSION_PROTOCOL_BODY}`;
+}
+
 export const SERVER_INSTRUCTIONS = `MIND is the persistent memory and knowledge-graph layer for AI agents — identity, memories, decisions, tasks, contacts, and emotional context that survive across every session, every tool, and every agent.
 
 ═══ HOW TO INTEGRATE — pick the path for your runtime ═══
@@ -74,14 +111,17 @@ AUTH: every path needs a MIND API key (prefix \`mind_\`). Get one at https://m-i
 2. BEFORE deciding or asserting: call mind_query on the topic. MIND is authoritative memory — do not guess or claim something does not exist without querying.
 3. AFTER completing non-trivial work: call mind_remember to log the outcome. Unlogged work is invisible to the next session. Use \`type: "entry"\` (PRIVATE — default) for all agent outcomes, logs, decisions, and research.
 
+${AGENT_SESSION_PROTOCOL_BODY}
+
 ⚠️ PRIVATE vs PUBLIC: \`document\` and \`entry\` (via mind_remember) are PRIVATE to the user's knowledge graph. \`feed_post\` (mind_remember) and mind_social create_thought are PUBLIC — they post to the user's social feed where everyone can see them. NEVER write to the public feed unless the user explicitly said "post", "share", "tweet", "feed", or "thought to my feed". Deploy logs, PR notes, work outcomes, and agent activity belong in \`entry\` — NEVER on the public feed.
 
 ═══ LOCAL FILES BELONG IN MIND ═══
 When you write or save a durable document on the user's machine — a report, spec, plan, contract, meeting note, research summary, transcript — store it in MIND the same turn (\`mind_remember\`, PRIVATE \`document\`) and file it with \`mind_folders\`. A document that exists only on one machine is lost work; MIND is the copy that survives a new laptop, a new agent and a new session. Never copy in source code (git holds it), build output, caches, dependency folders, media blobs, or anything carrying a credential — scan for secrets before storing and skip them. To back up a folder that already exists, use this server's \`sync-local-docs-to-mind\` prompt.
 
-═══ TOOL MAP — 44 tools ═══
+═══ TOOL MAP — 45 tools ═══
 MEMORY      mind_query (semantic search) · mind_remember (store / list / delete) · mind_context (load identity + rules) · mind_folders (organize documents) · mind_folder_routes / mind_folder_suggest (routing) · mind_share (document share links)
 LIFE & WORK mind_life (goals, tasks, calendar — supports delete + bulk_delete) · mind_focuses (Focus → Project buckets) · mind_tasks (assignable, reportable work items) · mind_checklists (Kanon checklists — templates, runs, toggle, progress) · mind_automate (triggers + workflows) · mind_notify (notifications)
+AGENT SESSIONS mind_sessions (log this live session into MIND Chat → Agents — open/append/close/list/get/reply/inbox/handoff/sources; see the AGENT SESSION PROTOCOL above)
 PEOPLE      mind_crm (contacts, pipeline stages, activity logging)
 GRAPH       mind_graph (KG stats + health) · mind_insights (Autonomous Learning Engine patterns) · mind_sense (MINDsense emotional state) · mind_osint (Osiris OSINT analyst)
 KNOWLEDGE   mind_research (autonomous deep-research jobs) · mind_train (teach the KG / save chats)
@@ -145,7 +185,9 @@ an agent that re-discovers the world each time.
 2. **Before deciding or asserting** — call \`mind_query\` on the specific topic. MIND is the authoritative memory; never claim something does not exist without querying first.
 3. **After completing non-trivial work** — call \`mind_remember\` to log the outcome (what worked, what didn't, decisions made). Tag it. Set \`source\` to your agent name.
 
-## 4. The 44 tools
+${AGENT_SESSION_PROTOCOL_BODY}
+
+## 4. The 45 tools
 
 ### Memory
 - **mind_query** — semantic search across the knowledge graph. Returns RETRIEVED CONTEXT (documents, entries, entities, relationships) for YOU to synthesize — not a finished answer — and costs 0 credits. Pass \`retrieve_only=false\` to have MIND write the answer itself (spends credits). 5 search modes.
@@ -159,6 +201,9 @@ an agent that re-discovers the world each time.
 - **mind_tasks** — site-wide assignable work items that attach to projects, contacts, or agents. Actions: list, create, get, update, complete, reopen, assign, delete, reports.
 - **mind_automate** — scheduled workflows, event triggers, rules.
 - **mind_notify** — read and manage notifications.
+
+### Agent sessions
+- **mind_sessions** — log this agent's own live session into MIND Chat → Agents so Anthony can read and reply to it (the "Agent Sessions" surface). Actions: \`open\` (call once mind_context succeeds — idempotent per source_key+external_session_id, resumes an existing session), \`append\` (every turn — send the user's message and your reply), \`close\` (on exit/compaction — mirrors the transcript into a MIND document), \`list\`, \`get\`, \`reply\` (alias for append of a single assistant-role message), \`inbox\` (undelivered messages Anthony sent while you were away), \`handoff\` (pass the session + transcript to another agent's source), \`sources\` (manage the sidebar toggles via \`source_action\`: list/create/update/delete). See the AGENT SESSION PROTOCOL above for the exact per-turn sequence.
 
 ### People
 - **mind_crm** — contacts, pipeline stages, activity logging, interaction history.
@@ -224,6 +269,7 @@ If you integrate over REST, every tool maps to \`/developer/v1\`. Examples:
 | Agent Command Center | \`/admin/agents\` (admin key) |
 | Agent ticket queue | \`/admin/agents/{slug}/tickets\` — \`GET\`/\`POST\`, \`/{ticket_id}\` \`GET\`/\`PATCH\`/\`DELETE\`, \`/{ticket_id}/comments\` \`POST\` (admin key) |
 | **Featured Minds Portal** | \`/admin/featured-minds\` \`GET\`/\`POST\`, \`/admin/featured-minds/{id}\` \`PUT\`/\`DELETE\`, \`/admin/featured-minds/{id}/full\` \`GET\` (bundled view), \`/admin/featured-minds/{id}/owner-profile\` \`PUT\` (admin write-through to user_profiles: model, prompt, temperature, brand fields), \`/admin/featured-minds/reorder\` \`PUT\` (body: \`{"ordered_mind_ids": [...]}\`), \`/admin/featured-minds/{id}/upload\` \`POST\` (multipart: \`kind=avatar|banner\`, \`file\`) — all admin key |
+| **Agent Sessions** | \`POST /developer/v1/agent-sessions/open\`, \`POST /developer/v1/agent-sessions/{session_id}/append\`, \`POST /developer/v1/agent-sessions/{session_id}/close\`, \`GET /developer/v1/agent-sessions\` (list), \`GET /developer/v1/agent-sessions/{session_id}\` (get, resets unread), \`POST /developer/v1/agent-sessions/{session_id}/reply\` (MIND-chat-UI → agent), \`GET /developer/v1/agent-sessions/{session_id}/inbox\`, \`POST /developer/v1/agent-sessions/{session_id}/handoff\`, \`DELETE /developer/v1/agent-sessions/{session_id}\` (JWT only), sources: \`GET\`/\`POST /developer/v1/agent-sessions/sources\`, \`PATCH\`/\`DELETE /developer/v1/agent-sessions/sources/{source_id}\` |
 
 ## 6. Common recipes
 
@@ -234,6 +280,7 @@ If you integrate over REST, every tool maps to \`/developer/v1\`. Examples:
 - **Register / update an agent** — \`mind_agents\` (admin key) — \`create\` or \`update\`, then \`heartbeat\` from the agent runtime.
 - **Handle agent tickets** — \`mind_tickets\` (admin key) — \`list\` an agent's queue, \`get\` a ticket with its thread, \`comment\` to answer, then \`resolve\`. \`agent_slug\` is required on every call.
 - **Run the Featured Minds Portal from MCP** — \`mind_admin\` (admin key) — \`list_featured_minds\` to get every mind_id, \`get_featured_mind_full\` for a bundled view (featured_mind doc + owner profile + model catalog in one round-trip), \`update_featured_mind\` for catalog fields (title/tags/featured/display_order/is_public/avatar/banner/subtitle/price), \`update_featured_mind_owner_profile\` for chat-behavior fields (preferred_llm_model, public_mind_prompt, chat_temperature, chat_reasoning_effort, public_mind_tagline/greeting/persona, bio) — this write-through hits /m/{username} immediately, \`reorder_featured_minds\` for bulk display_order, \`delete_featured_mind\` to remove from the catalog (user's MIND is preserved).
+- **Log this session into MIND Chat → Agents** — call the \`sync-agent-session\` MCP prompt (arguments: \`runtime\`, \`source_key\`, both optional) for the full per-turn procedure, or just follow the AGENT SESSION PROTOCOL above directly with \`mind_sessions\`: \`open\` once mind_context succeeds, \`append\` every turn, \`close\` on exit.
 
 ## 7. Feed post endpoint surfaces (clarification)
 

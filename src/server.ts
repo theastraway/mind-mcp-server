@@ -11,13 +11,15 @@
  * integration path to use for its runtime, how to authenticate, and the
  * session protocol — without having to be told.
  *
- * Tools (44):
+ * Tools (45):
  *   Memory & knowledge — mind_query, mind_remember, mind_folders,
  *     mind_folder_routes, mind_folder_suggest, mind_share (document share
  *     links), mind_context, mind_graph, mind_insights, mind_research,
  *     mind_train
  *   Life & work — mind_life, mind_focuses, mind_tasks, mind_automate,
  *     mind_notify, mind_checklists (Kanon checklists)
+ *   Agent sessions — mind_sessions (log this session into MIND Chat →
+ *     Agents; see the AGENT SESSION PROTOCOL in ./integration-guide)
  *   People — mind_crm
  *   Social & profile — mind_social, mind_social_analytics, mind_profile,
  *     mind_personas
@@ -37,7 +39,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MindApiError, MindClient } from "./mind-client.js";
-import { SERVER_INSTRUCTIONS, INTEGRATION_GUIDE, buildSyncLocalDocsPrompt } from "./integration-guide.js";
+import { SERVER_INSTRUCTIONS, INTEGRATION_GUIDE, buildSyncLocalDocsPrompt, buildSyncAgentSessionPrompt } from "./integration-guide.js";
 
 // ─── Shared MCP result helpers ──────────────────────────────
 // Prefer these over inline `catch (err) → "mind_x error: ${err}"` in new
@@ -86,7 +88,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
   const server = new McpServer(
     {
       name: "mind",
-      version: "0.26.0",
+      version: "0.27.0",
     },
     {
       // Returned to every client in the MCP `initialize` response — the first
@@ -103,7 +105,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
     {
       title: "MIND Integration Guide",
       description:
-        "Complete playbook for integrating any AI agent with MIND — the three integration paths (MCP server, OpenClaw plugin, REST API), authentication, the session protocol, all 44 tools, REST endpoint mapping, and common recipes.",
+        "Complete playbook for integrating any AI agent with MIND — the three integration paths (MCP server, OpenClaw plugin, REST API), authentication, the session protocol, all 45 tools, REST endpoint mapping, and common recipes.",
       mimeType: "text/markdown",
     },
     async (uri) => ({
@@ -145,6 +147,39 @@ export function createMindMcpServer(client: MindClient): McpServer {
           content: {
             type: "text" as const,
             text: buildSyncLocalDocsPrompt({ root, dry_run, since }),
+          },
+        },
+      ],
+    }),
+  );
+
+  // ─── sync-agent-session prompt ───────────────────────────
+  // Standard prompt shipped WITH the server so any connected agent can adopt
+  // the AGENT SESSION PROTOCOL (see integration-guide.ts) without being
+  // taught the procedure from scratch. Body lives in integration-guide.ts
+  // beside SERVER_INSTRUCTIONS and buildSyncLocalDocsPrompt so all shipped
+  // copy is in one place — see AGENT_SESSION_PROTOCOL_BODY there, which is
+  // also embedded verbatim in SERVER_INSTRUCTIONS and (compact) in the
+  // mind_sessions tool description below, so a client that only reads tool
+  // descriptions still follows it.
+  server.registerPrompt(
+    "sync-agent-session",
+    {
+      title: "Adopt the Agent Session Protocol",
+      description:
+        "Log this agent's live session into MIND Chat → Agents so Anthony can read and reply to it. Returns the full open/append/close/handoff protocol, addressed to your runtime.",
+      argsSchema: {
+        runtime: z.string().optional().describe('Your runtime name, e.g. "claude-code", "codex", "cursor". Default: "your runtime".'),
+        source_key: z.string().optional().describe('The MIND Chat sidebar toggle you were assigned, e.g. "claude-code-1". Default: "your-source-key".'),
+      },
+    },
+    async ({ runtime, source_key }) => ({
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: buildSyncAgentSessionPrompt({ runtime, source_key }),
           },
         },
       ],
@@ -3276,6 +3311,225 @@ export function createMindMcpServer(client: MindClient): McpServer {
           content: [{ type: "text" as const, text: `Error in mind_notify: ${err}` }],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ─── mind_sessions ──────────────────────────────────────
+  // "Agent Sessions in MIND Chat" — logs THIS agent's own live session into
+  // MIND as a tagged Agent Session so Anthony can read the transcript and
+  // reply from MIND Chat → Agents. Backed by
+  // backend/routes/agent_session_routes.py, prefix
+  // /developer/v1/agent-sessions. See the full AGENT SESSION PROTOCOL in
+  // integration-guide.ts (embedded verbatim in SERVER_INSTRUCTIONS and the
+  // sync-agent-session prompt) — the compact version below is repeated here
+  // so a client that only ever reads tool descriptions still gets it.
+
+  server.tool(
+    "mind_sessions",
+    "Log THIS agent's own live session into MIND Chat → Agents, so Anthony can read the transcript and reply — his reply reaches you on your next turn. Distinct from mind_remember (one durable fact) and mind_train (teaching the KG): this is the live, turn-by-turn session log, mirrored into a MIND document when you close it.\n\n" +
+      "PROTOCOL (do this every session): " +
+      "1) CONNECT — as soon as mind_context succeeds, call action=open with source_key (your assigned MIND Chat toggle, e.g. \"claude-code-1\"), external_session_id (your runtime's own session id), runtime, title (first user ask, 6-10 words), machine/cwd/repo/branch/model. If `resumed` is true, read `tail` before answering, and answer everything in `pending_replies` first — those arrived while you were away. " +
+      "2) EVERY TURN — after you finish replying, call action=append with the user's message and your final reply (role user / assistant); tool calls go in as role=tool one-line summaries, never raw payloads. Check `pending_replies` on the response and answer them next turn. action=reply is a shortcut for appending a single assistant-role message when you have no user message to log alongside it. " +
+      "3) IDLE — MIND marks the session idle after 30 minutes with no append; the next append revives it, nothing to do meanwhile. " +
+      "4) TERMINATE — on exit, compaction, or \"done\", call action=close with a summary (what was asked, what shipped with ids/PR numbers, what is still undone); MIND mirrors the transcript into your Sessions folder as a document. " +
+      "5) HANDOFF — to pass the conversation to another agent, call action=handoff with to_source_key=<their toggle>; they see it in their session list with the transcript as context. " +
+      "Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads.\n\n" +
+      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key).",
+    {
+      action: z
+        .enum(["open", "append", "close", "list", "get", "reply", "inbox", "handoff", "sources"])
+        .describe("Which agent-session operation to perform."),
+      // open
+      source_key: z.string().optional().describe("Your assigned MIND Chat sidebar toggle slug, e.g. \"claude-code-1\" — required for open; also filters list; also required for sources action=create (as the new source's key)."),
+      external_session_id: z.string().optional().describe("Your runtime's own session id — required for open. Idempotent: opening the same (source_key, external_session_id) again resumes the existing session instead of creating a new one."),
+      runtime: z.string().optional().describe("Runtime name, e.g. \"claude-code\", \"codex\", \"cursor\", \"openclaw\", \"grok\", \"n8n\", \"custom\" — open (used if the source is auto-created); sources action=create/update."),
+      source_label: z.string().optional().describe("Human-readable label for an auto-created source on open, e.g. \"Claude Code 1\" — defaults to the titlecased source_key if omitted."),
+      title: z.string().optional().describe("Session title (first user ask, 6-10 words) — open (initial) or append (updates it)."),
+      machine: z.string().optional().describe("Machine identifier — open."),
+      cwd: z.string().optional().describe("Working directory — open."),
+      repo: z.string().optional().describe("Repository name — open."),
+      branch: z.string().optional().describe("Git branch — open."),
+      model: z.string().optional().describe("LLM model in use — open."),
+      tags: z.array(z.string()).optional().describe("Freeform tags — open."),
+      // append / reply
+      session_id: z.string().optional().describe("Session id returned by open — required for append/close/get/inbox/handoff."),
+      messages: z
+        .array(
+          z.object({
+            role: z.enum(["user", "assistant", "system", "tool"]),
+            content: z.string(),
+            origin: z.enum(["agent"]).optional(),
+            meta: z.record(z.string(), z.any()).optional(),
+            created_at: z.string().optional(),
+          })
+        )
+        .optional()
+        .describe("Messages to append, in order — required for append. Tool-call messages should be role=tool, one-line summaries only, never raw payloads."),
+      content: z.string().optional().describe("Message text — required for reply (appended as a single role=assistant message)."),
+      // close
+      summary: z.string().optional().describe("What was asked, what shipped (with ids/PR numbers), what is still undone — close. If omitted, MIND builds one from the transcript."),
+      // list / close (status set) share this field
+      status: z.enum(["active", "idle", "ended"]).optional().describe("close: pass \"ended\" to explicitly close (default when summary is given). list: filter sessions by status."),
+      q: z.string().optional().describe("Free-text search over title/preview — list."),
+      limit: z.number().int().optional().describe("Max results — list (default 30) / get (default 200, messages)."),
+      before: z.string().optional().describe("Pagination cursor (last_activity_at) — list."),
+      before_seq: z.number().int().optional().describe("Return messages with seq before this value — get."),
+      // handoff
+      to_source_key: z.string().optional().describe("Target source's key to hand this session off to — required for handoff."),
+      // sources
+      source_action: z.enum(["list", "create", "update", "delete"]).optional().describe("Sub-action for action=sources (default list)."),
+      source_id: z.string().optional().describe("Source id — required for sources action=update/delete."),
+      key: z.string().optional().describe("New source's key slug — required for sources action=create."),
+      label: z.string().optional().describe("Source label, e.g. \"Claude Code 1\" — sources action=create (required) / update."),
+      color: z.string().optional().describe("Sidebar chip color — sources action=create/update."),
+      wake_url: z.string().optional().describe("Optional push endpoint MIND POSTs {session_id, reply} to (fire-and-forget, 5s timeout) when the user replies — sources action=create/update."),
+      force: z.boolean().optional().describe("sources action=delete: also delete the source's sessions instead of failing 409 when sessions exist."),
+    },
+    async (args) => {
+      const { action } = args;
+      try {
+        switch (action) {
+          case "open": {
+            const { source_key, external_session_id } = args;
+            if (!source_key) return err("Error: 'source_key' is required for open.");
+            if (!external_session_id) return err("Error: 'external_session_id' is required for open.");
+            return ok(
+              await client.openAgentSession({
+                source_key,
+                external_session_id,
+                runtime: args.runtime,
+                source_label: args.source_label,
+                title: args.title,
+                machine: args.machine,
+                cwd: args.cwd,
+                repo: args.repo,
+                branch: args.branch,
+                model: args.model,
+                tags: args.tags,
+              })
+            );
+          }
+
+          case "append": {
+            const { session_id, messages } = args;
+            if (!session_id) return err("Error: 'session_id' is required for append.");
+            if (!messages?.length) return err("Error: 'messages' (at least one) is required for append.");
+            return ok(await client.appendAgentSession(session_id, messages, args.title));
+          }
+
+          case "reply": {
+            const { session_id, content } = args;
+            if (!session_id) return err("Error: 'session_id' is required for reply.");
+            if (!content) return err("Error: 'content' is required for reply.");
+            return ok(
+              await client.appendAgentSession(session_id, [{ role: "assistant", content }])
+            );
+          }
+
+          case "close": {
+            const { session_id } = args;
+            if (!session_id) return err("Error: 'session_id' is required for close.");
+            return ok(
+              await client.closeAgentSession(session_id, {
+                summary: args.summary,
+                status: args.status === "ended" ? "ended" : undefined,
+              })
+            );
+          }
+
+          case "list":
+            return ok(
+              await client.listAgentSessions({
+                source_key: args.source_key,
+                status: args.status,
+                q: args.q,
+                limit: args.limit,
+                before: args.before,
+              })
+            );
+
+          case "get": {
+            const { session_id } = args;
+            if (!session_id) return err("Error: 'session_id' is required for get.");
+            return ok(
+              await client.getAgentSession(session_id, {
+                limit: args.limit,
+                before_seq: args.before_seq,
+              })
+            );
+          }
+
+          case "inbox": {
+            const { session_id } = args;
+            if (!session_id) return err("Error: 'session_id' is required for inbox.");
+            return ok(await client.agentSessionInbox(session_id));
+          }
+
+          case "handoff": {
+            const { session_id, to_source_key } = args;
+            if (!session_id) return err("Error: 'session_id' is required for handoff.");
+            if (!to_source_key) return err("Error: 'to_source_key' is required for handoff.");
+            return ok(await client.handoffAgentSession(session_id, to_source_key));
+          }
+
+          case "sources": {
+            const sourceAction = args.source_action ?? "list";
+            switch (sourceAction) {
+              case "list":
+                return ok(await client.listAgentSessionSources());
+
+              case "create": {
+                const { key, label, runtime } = args;
+                if (!key) return err("Error: 'key' is required for sources action=create.");
+                if (!label) return err("Error: 'label' is required for sources action=create.");
+                if (!runtime) return err("Error: 'runtime' is required for sources action=create.");
+                return ok(
+                  await client.createAgentSessionSource({
+                    key,
+                    label,
+                    runtime,
+                    color: args.color,
+                    wake_url: args.wake_url,
+                  })
+                );
+              }
+
+              case "update": {
+                const { source_id } = args;
+                if (!source_id) return err("Error: 'source_id' is required for sources action=update.");
+                return ok(
+                  await client.updateAgentSessionSource(source_id, {
+                    label: args.label,
+                    runtime: args.runtime,
+                    color: args.color,
+                    wake_url: args.wake_url,
+                  })
+                );
+              }
+
+              case "delete": {
+                const { source_id } = args;
+                if (!source_id) return err("Error: 'source_id' is required for sources action=delete.");
+                await client.deleteAgentSessionSource(source_id, args.force);
+                return ok({ ok: true, source_id });
+              }
+
+              default: {
+                const _exhaustive: never = sourceAction;
+                return err(`Unknown source_action: ${_exhaustive}`);
+              }
+            }
+          }
+
+          default: {
+            const _exhaustive: never = action;
+            return err(`Unknown action: ${_exhaustive}`);
+          }
+        }
+      } catch (e) {
+        if (e instanceof MindApiError) return err(`mind_sessions ${action} failed (HTTP ${e.status}): ${apiDetail(e)}`);
+        return err(`mind_sessions error: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   );

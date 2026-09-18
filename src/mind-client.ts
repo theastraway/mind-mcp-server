@@ -2513,6 +2513,143 @@ export class MindClient {
     if (refresh) qp.refresh = "true";
     return this.request("GET", "/api/trader/insights", undefined, qp);
   }
+
+  // ─── Agent Sessions ─────────────────────────────────────
+  // Every external agent (Claude Code, Codex, Cursor, Grokbot, OpenClaw...)
+  // logs its live session into MIND Chat as a tagged Agent Session — see the
+  // AGENT SESSION PROTOCOL in integration-guide.ts. Backed by
+  // backend/routes/agent_session_routes.py, prefix
+  // /developer/v1/agent-sessions.
+
+  async openAgentSession(req: OpenAgentSessionRequest): Promise<OpenAgentSessionResponse> {
+    return this.request("POST", "/developer/v1/agent-sessions/open", req);
+  }
+
+  async appendAgentSession(
+    sessionId: string,
+    messages: AgentSessionMessageInput[],
+    title?: string
+  ): Promise<AppendAgentSessionResponse> {
+    const body: Record<string, unknown> = { messages };
+    if (title !== undefined) body.title = title;
+    return this.request(
+      "POST",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/append`,
+      body
+    );
+  }
+
+  async closeAgentSession(
+    sessionId: string,
+    params?: { summary?: string; status?: "ended" }
+  ): Promise<CloseAgentSessionResponse> {
+    return this.request(
+      "POST",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/close`,
+      params ?? {}
+    );
+  }
+
+  async listAgentSessions(params?: {
+    source_key?: string;
+    status?: string;
+    q?: string;
+    limit?: number;
+    before?: string;
+  }): Promise<ListAgentSessionsResponse> {
+    const qp: Record<string, string> = {};
+    if (params?.source_key) qp.source_key = params.source_key;
+    if (params?.status) qp.status = params.status;
+    if (params?.q) qp.q = params.q;
+    if (params?.limit !== undefined) qp.limit = String(params.limit);
+    if (params?.before) qp.before = params.before;
+    return this.request("GET", "/developer/v1/agent-sessions", undefined, qp);
+  }
+
+  async getAgentSession(
+    sessionId: string,
+    params?: { limit?: number; before_seq?: number }
+  ): Promise<GetAgentSessionResponse> {
+    const qp: Record<string, string> = {};
+    if (params?.limit !== undefined) qp.limit = String(params.limit);
+    if (params?.before_seq !== undefined) qp.before_seq = String(params.before_seq);
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}`,
+      undefined,
+      qp
+    );
+  }
+
+  /** Human-in-MIND reply → appends {role:"user", origin:"mind"}. Used by the
+   * MIND Chat UI's own client, not by the connecting agent's "reply" tool
+   * action (which is sugar over appendAgentSession — see mind_sessions in
+   * server.ts). Kept here so every §2 REST endpoint has a 1:1 client method. */
+  async replyAgentSession(sessionId: string, content: string): Promise<AgentSessionMessage> {
+    return this.request(
+      "POST",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/reply`,
+      { content }
+    );
+  }
+
+  async agentSessionInbox(sessionId: string): Promise<AgentSessionInboxResponse> {
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/inbox`
+    );
+  }
+
+  async handoffAgentSession(
+    sessionId: string,
+    toSourceKey: string
+  ): Promise<AgentSessionRecord> {
+    return this.request(
+      "POST",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/handoff`,
+      { to_source_key: toSourceKey }
+    );
+  }
+
+  async deleteAgentSession(sessionId: string): Promise<void> {
+    await this.request("DELETE", `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  async listAgentSessionSources(): Promise<{ sources: AgentSessionSource[] }> {
+    return this.request("GET", "/developer/v1/agent-sessions/sources");
+  }
+
+  async createAgentSessionSource(req: {
+    key: string;
+    label: string;
+    runtime: string;
+    color?: string;
+    wake_url?: string;
+  }): Promise<AgentSessionSource> {
+    return this.request("POST", "/developer/v1/agent-sessions/sources", req);
+  }
+
+  async updateAgentSessionSource(
+    sourceId: string,
+    patch: { label?: string; runtime?: string; color?: string; wake_url?: string }
+  ): Promise<AgentSessionSource> {
+    return this.request(
+      "PATCH",
+      `/developer/v1/agent-sessions/sources/${encodeURIComponent(sourceId)}`,
+      patch
+    );
+  }
+
+  async deleteAgentSessionSource(sourceId: string, force?: boolean): Promise<void> {
+    const qp: Record<string, string> = {};
+    if (force) qp.force = "true";
+    await this.request(
+      "DELETE",
+      `/developer/v1/agent-sessions/sources/${encodeURIComponent(sourceId)}`,
+      undefined,
+      qp
+    );
+  }
 }
 
 // ─── Task types ───────────────────────────────────────────
@@ -2901,4 +3038,137 @@ export interface AgentTicket {
 export interface TicketStats {
   total: number;
   open: number;
+}
+
+// ─── Agent Session types ───────────────────────────────────
+// See "Agent Sessions in MIND Chat" (backend/routes/agent_session_routes.py,
+// prefix /developer/v1/agent-sessions) and the AGENT SESSION PROTOCOL in
+// integration-guide.ts.
+
+export type AgentSessionRuntime =
+  | "claude-code"
+  | "codex"
+  | "cursor"
+  | "openclaw"
+  | "grok"
+  | "n8n"
+  | "custom"
+  | string;
+
+export type AgentSessionStatus = "active" | "idle" | "ended";
+export type AgentSessionMessageRole = "user" | "assistant" | "system" | "tool";
+export type AgentSessionMessageOrigin = "agent" | "mind";
+
+export interface AgentSessionMessage {
+  message_id: string;
+  session_id: string;
+  user_id?: string;
+  seq: number;
+  role: AgentSessionMessageRole;
+  content: string;
+  origin: AgentSessionMessageOrigin;
+  delivered_at?: string | null;
+  meta?: Record<string, unknown>;
+  created_at: string;
+}
+
+/** Input shape for POST /{session_id}/append — origin defaults server-side
+ * to "agent" when omitted. */
+export interface AgentSessionMessageInput {
+  role: AgentSessionMessageRole;
+  content: string;
+  origin?: "agent";
+  meta?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface AgentSessionSource {
+  source_id: string;
+  user_id?: string;
+  key: string;
+  label: string;
+  runtime: AgentSessionRuntime;
+  color?: string | null;
+  wake_url?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_seen_at?: string | null;
+  session_count: number;
+}
+
+export interface AgentSessionRecord {
+  session_id: string;
+  user_id?: string;
+  workspace_id?: string;
+  source_id: string;
+  source_key: string;
+  runtime: AgentSessionRuntime;
+  external_session_id: string;
+  title: string;
+  status: AgentSessionStatus;
+  started_at: string;
+  last_activity_at: string;
+  ended_at?: string | null;
+  machine?: string | null;
+  cwd?: string | null;
+  repo?: string | null;
+  branch?: string | null;
+  model?: string | null;
+  tags?: string[];
+  message_count: number;
+  last_message_preview?: string | null;
+  summary?: string | null;
+  mirror_doc_id?: string | null;
+  unread_for_user: number;
+  pending_reply_count: number;
+  created_at: string;
+  updated_at: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface OpenAgentSessionRequest {
+  source_key: string;
+  external_session_id: string;
+  runtime?: AgentSessionRuntime;
+  source_label?: string;
+  title?: string;
+  machine?: string;
+  cwd?: string;
+  repo?: string;
+  branch?: string;
+  model?: string;
+  tags?: string[];
+}
+
+export interface OpenAgentSessionResponse {
+  session_id: string;
+  resumed: boolean;
+  status: AgentSessionStatus;
+  title: string;
+  pending_replies: AgentSessionMessage[];
+  tail: AgentSessionMessage[];
+}
+
+export interface AppendAgentSessionResponse {
+  ok: boolean;
+  seq_last: number;
+  pending_replies: AgentSessionMessage[];
+}
+
+export interface CloseAgentSessionResponse {
+  ok: boolean;
+  mirror_doc_id?: string | null;
+}
+
+export interface ListAgentSessionsResponse {
+  sessions: AgentSessionRecord[];
+  sources: AgentSessionSource[];
+}
+
+export interface GetAgentSessionResponse extends AgentSessionRecord {
+  messages: AgentSessionMessage[];
+}
+
+export interface AgentSessionInboxResponse {
+  pending_replies: AgentSessionMessage[];
 }
