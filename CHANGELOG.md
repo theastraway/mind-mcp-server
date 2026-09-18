@@ -4,6 +4,18 @@ All notable changes to `@astramindapp/mcp-server` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.26.0] — 2026-09-17
+
+### Changed — prompt-surface release: tool descriptions are the agent-facing system prompt
+
+- **Why this exists:** an audit found 41 of the 44 shipped tool descriptions were byte-identical across four minor versions (0.21.0 → 0.25.0) — this layer had effectively never been edited since launch. A tool description is not documentation; it is the only prompt MIND controls on the connecting agent's side, and a thin one (`mind_query` was 172 characters with zero guidance on how to ask) produces thin queries, thin answers, and a false "MIND is weak" conclusion. No tool behavior, parameter, schema, or default changed in this release — every edit below is description text only.
+- **`mind_query`** rewritten to teach the highest-leverage lever directly in the prompt: ask a rich, specific, full-sentence question; prefer retrieve-then-write-in-one-ask over a flat probe; name the document/entity/date-range you expect; if an answer is thin, change the question rather than the mode. Added a mechanically accurate mode picker (naive/local/global/hybrid/mix, what each actually reads) and an explicit warning that an empty or thin result means the query missed, never that the thing does not exist — a negative must be re-asked and stated, not reported as fact.
+- **`mind_context`** rewritten to state plainly that it returns retrieved context, not a finished briefing; that passing only the needed `sections` outperforms the full default payload; that every fact carries a date and the newer one wins on conflict; and that an empty `recent` section means nothing was logged, not that nothing happened.
+- **`mind_remember`** keeps its existing private/public safety text and title rule verbatim, with a new paragraph: retrieval quality is decided at write time, not query time — state facts in the words a future search will use, put the entity name in the first sentence, inline dates/ids/paths instead of "the PR"/"yesterday", and say explicitly what a note supersedes.
+- **Ten more tool descriptions rewritten** after auditing all 44 for whether a competent connecting agent could tell when to reach for the tool: `mind_crm`, `mind_graph`, `mind_sense`, `mind_research`, `mind_train`, `mind_profile`, `mind_insights`, `mind_automate`, `mind_notify`, `mind_tasks`. Each now states what it's for in the caller's terms, when to reach for it over `mind_query` (or over a sibling tool — e.g. `mind_tasks` vs `mind_life` vs `mind_checklists`), and what an empty result actually means for that tool (a missing CRM record is not proof the person is unknown to MIND; zero MINDsense signals in a window is not proof the user was neutral; "no automations" is not proof nothing recurring runs elsewhere).
+- **`mcpb/manifest.json`** — the seven overlapping one-line tool summaries (`mind_query`, `mind_remember`, `mind_context`, `mind_crm`, `mind_graph`, `mind_research`, `mind_tasks`) rewritten to stay in the same spirit as the full `src/server.ts` descriptions, at manifest length.
+- Added `test/tool-descriptions.test.mjs` — asserts the three rewritten core tool descriptions retain their load-bearing guidance (ask-quality instructions, mode picker, empty-result warnings, the supersession/retrieval-quality note) so this layer cannot silently regress to boilerplate again.
+
 ## [0.25.0] — 2026-09-16
 
 ### Added — full app-suite coverage: 31 tools → 44

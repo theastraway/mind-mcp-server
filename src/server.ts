@@ -86,7 +86,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
   const server = new McpServer(
     {
       name: "mind",
-      version: "0.25.0",
+      version: "0.26.0",
     },
     {
       // Returned to every client in the MCP `initialize` response — the first
@@ -157,7 +157,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_query",
-    "Search your MIND knowledge graph. Returns RETRIEVED CONTEXT from the graph — documents, entries, entities and relationships — NOT a finished answer. YOU must read that context and write the answer yourself. Does not use MIND's LLM and costs 0 credits. Use this BEFORE making decisions — MIND is your memory. (Pass retrieve_only=false to have MIND synthesize the answer instead, which spends credits.)",
+    "Search the user's MIND knowledge graph — their persistent memory of people, projects, decisions, outcomes and history. Returns RETRIEVED CONTEXT for YOU to read and synthesize — documents, entries, entities and relationships — NOT a finished answer. Does not use MIND's LLM and costs 0 credits. Call this before asserting anything about the user's world, and before saying something does not exist. (Pass retrieve_only=false to have MIND's own LLM write the answer instead, which spends credits.)\n\nHOW TO ASK — this changes answer quality more than any parameter. Ask a rich, specific, full-sentence question; \"what is X\" retrieves poorly. Best results come from retrieve-then-write in one ask: \"Find everything about X, Y and Z, then write <deliverable> in this shape: <template>. Use only what you found; mark anything missing as unknown and do not invent it.\" Name the thing you expect to find — a document title, a person, a project, a date range. If the first answer is thin, change the QUESTION, not the mode — chain a narrower ask.\n\nPICKING A MODE (mechanical): naive reads document text only — best for recalling an exact passage or wording. local walks a named entity and its immediate graph neighbours — best for one specific person, company or thing. global reasons over relationships and themes across the whole graph — best for cross-cutting patterns. hybrid combines local+global graph reasoning but reads no raw document text. mix adds raw document text on top of hybrid and is the most complete; reach for it when hybrid feels thin. hybrid is the default — drop to naive/local/global only when you specifically need that narrower lens.\n\nNEGATIVES ARE THE HIGHEST-RISK ANSWER. An empty or thin result means your query missed — it is never proof the thing does not exist. Before reporting that something is absent, re-ask with different wording and say what you searched.",
     {
       query: z.string().describe("What to search for in your knowledge graph"),
       mode: z
@@ -229,7 +229,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_remember",
-    "Store and manage content in your MIND knowledge graph. Use for facts, decisions, learnings, research, notes — anything worth remembering. Auto-categorized. Always log outcomes here after completing tasks. Supports create (default), delete, search, get, and list.\n\n⚠️ PRIVATE vs PUBLIC: `document` and `entry` are PRIVATE to the user's knowledge graph. `feed_post` is a PUBLIC social-media post that appears on the user's public feed for everyone to see. Default to `entry` for all agent outcomes, logs, decisions, and research. NEVER use `feed_post` unless the user explicitly says \"post\", \"share\", \"tweet\", \"feed\", or \"thought to my feed\" — deploy logs, PR notes, work outcomes, and agent activity belong in `entry`, NOT on the public feed.\n\nTitle rule: lessons are titled 'Lesson - Failure - <behavior>' / 'Lesson - Behavior - <behavior>' / 'Lesson - Win - <behavior>'; never put '/' or parentheses in a title, the card is derived from it.",
+    "Store and manage content in your MIND knowledge graph. Use for facts, decisions, learnings, research, notes — anything worth remembering. Auto-categorized. Always log outcomes here after completing tasks. Supports create (default), delete, search, get, and list.\n\n⚠️ PRIVATE vs PUBLIC: `document` and `entry` are PRIVATE to the user's knowledge graph. `feed_post` is a PUBLIC social-media post that appears on the user's public feed for everyone to see. Default to `entry` for all agent outcomes, logs, decisions, and research. NEVER use `feed_post` unless the user explicitly says \"post\", \"share\", \"tweet\", \"feed\", or \"thought to my feed\" — deploy logs, PR notes, work outcomes, and agent activity belong in `entry`, NOT on the public feed.\n\nTitle rule: lessons are titled 'Lesson - Failure - <behavior>' / 'Lesson - Behavior - <behavior>' / 'Lesson - Win - <behavior>'; never put '/' or parentheses in a title, the card is derived from it.\n\nWRITE FOR THE AGENT WHO WILL SEARCH FOR THIS LATER — retrieval quality is decided here, not at query time. State facts in the words someone will later search for. Put the entity name in the first sentence. Inline dates, ids, file paths and numbers rather than saying \"the PR\" or \"yesterday\" — a note that only says \"fixed it\" is unfindable. If this supersedes an earlier note, say so explicitly and name what it replaces, so the older fact can be closed off instead of silently competing with this one.",
     {
       action: z
         .enum(["create", "delete", "search", "get", "list"])
@@ -850,7 +850,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_context",
-    "Get your persistent context from MIND — identity, preferences, rules, and recent activity. Returns RETRIEVED CONTEXT (not a finished briefing). YOU synthesize who you are and what matters. Does not use MIND's LLM and costs 0 credits. Call this at the start of every session.",
+    "Load the user's persistent context from MIND at session start — identity, preferences, operating rules, current priorities and recent activity. Returns RETRIEVED CONTEXT for YOU to synthesize, NOT a finished briefing. Does not use MIND's LLM and costs 0 credits. Call this at the start of every session.\n\nPass only the `sections` you actually need for the task at hand — a focused payload measurably outperforms the full default set, because the model attends better to fewer, more relevant facts. Every fact carries a date; when two facts conflict, the newer one wins, and say so if you rely on it. An empty `recent` section means nothing was logged, not that nothing happened — follow up with mind_query before assuming a quiet day. This is a snapshot, not the whole graph; for anything specific, follow up with mind_query.",
     {
       sections: z
         .array(z.enum(["soul", "user", "rules", "priorities", "recent"]))
@@ -1427,7 +1427,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_tasks",
-    "Manage site-wide tasks in MIND — assignable, completable, reportable work items. A task can attach to a Life project (parent_type=life_item), a CRM contact (parent_type=contact), an agent (parent_type=agent), or stand alone. Assign tasks to a MIND member, an agent, or an external email. Use action=reports for completion analytics.",
+    "Manage site-wide tasks — assignable, completable work items that are lighter-weight than a Life project/outcome and simpler than a Kanon checklist item. Reach for mind_tasks for a single actionable to-do (optionally attached to a Life project via parent_type=life_item, a CRM contact via parent_type=contact, or an agent) that needs an owner and a done/not-done state; reach for mind_life when the work is itself a deliverable inside the Focus→Project→Outcome hierarchy, and mind_checklists when you need a multi-item checklist with a progress rollup. Assign tasks to a MIND member, an agent, or an external email. Actions: list/create/get/update/complete/reopen/assign/delete, reports (completion analytics). An empty list means no tasks exist under that filter, not that no work is happening — check mind_life and mind_checklists for the same window before concluding nothing is tracked.",
     {
       action: z
         .enum([
@@ -1634,7 +1634,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_crm",
-    "Manage contacts and relationships in MIND CRM. Use for tracking people, companies, leads, interaction history, and activity logging.",
+    "Manage contacts and relationships in MIND CRM — the system of record for people, companies, leads and prospects, separate from the knowledge graph's document/entry memory. Reach for this (not mind_query) when you need to create, update, or list a specific contact record, or log/read a dated interaction history — reach for mind_query when you want a synthesized answer about a relationship drawn from everything MIND knows. Actions: list/create/update/delete/get contacts, log_activity (record an interaction), list_activities (interaction history). An empty list or 'No contacts found' means no CRM records exist yet, not that the person is unknown to MIND — check mind_query before concluding a relationship is undocumented.",
     {
       action: z
         .enum(["list", "create", "update", "delete", "get", "log_activity", "list_activities"])
@@ -1798,7 +1798,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_graph",
-    "Get MIND knowledge graph statistics, diagnostics, and label details. Use to check graph health, growth, and entity breakdown.",
+    "Get MIND knowledge graph statistics and diagnostics — entity/relationship counts, growth, label breakdown, and health status. Use this for a quantitative pulse-check on the graph itself (e.g. before a large ingestion, or to cite \"MIND has N entities\"); it does not search or retrieve content, so for facts, people or history use mind_query instead. Actions: stats (default overview), diagnostics (health check), labels (entity type breakdown). A low or zero count can mean an empty tenant OR a scoping/auth issue reading the wrong account — verify with mind_query on a known fact before treating a small graph as evidence nothing has been logged.",
     {
       action: z
         .enum(["stats", "diagnostics", "labels"])
@@ -2264,7 +2264,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_sense",
-    "Access MINDsense emotional intelligence — the user's living emotional state, signal history, emotional timeline, and KG entity weights. Use this to understand how the user is feeling and what emotionally significant events have occurred.",
+    "Access MINDsense — the user's live emotional state, signal history, spikes and emotionally-weighted entities, derived from valence/arousal signal processing rather than asked directly. Reach for this before a sensitive conversation, when deciding how hard to push on a topic, or when asked \"how am I feeling\" / \"read the room\"; reach for mind_query instead for factual history about what happened. Actions: state (current snapshot), signals (recent raw signals), timeline (historical trend), kg_weights (which entities carry emotional weight), spikes (notable events, some unacknowledged), acknowledge (clear a spike), summary (AI-written recap). No signals in the lookback window means nothing was captured in that period, not that the user was neutral — widen `days` before concluding calm.",
     {
       action: z
         .enum(["state", "signals", "timeline", "kg_weights", "spikes", "acknowledge", "summary"])
@@ -2380,7 +2380,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_research",
-    "Launch and manage deep research jobs. Research runs autonomously — it gathers information, analyzes it, and stores findings in the knowledge graph. Use for competitive analysis, market research, technical deep-dives.",
+    "Launch and track autonomous deep-research jobs — MIND gathers sources, synthesizes them, and writes findings into the knowledge graph as it goes. Use this for a genuinely open-ended investigation (competitive analysis, market research, a technical deep-dive) that would take multiple search rounds; use mind_query for a quick fact lookup instead. Actions: start (launch, returns job_id), status (poll progress and read the summary once complete), list (all jobs). A job still 'running' has no findings yet — poll status again rather than treating a thin or missing summary as a negative result; once complete, read the findings via mind_query rather than re-reading the raw job.",
     {
       action: z
         .enum(["start", "status", "list"])
@@ -2458,7 +2458,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_train",
-    "Train MIND's knowledge graph. Start guided training sessions to teach it about yourself, or save existing chat conversations into the knowledge graph for persistent memory.",
+    "Run guided or freeform sessions that teach MIND about the user through conversation, or extract an existing chat transcript into the knowledge graph as durable memories — this is how unstructured conversation becomes queryable facts, distinct from mind_remember (one explicit fact) or mind_query (reading facts back). Actions: start (begin a session, optionally typed: basics/network/expertise/history/goals/freeform), chat (send the next training message), status (progress + items learned so far), list_sessions, pause/resume, save_chat (extract a chat session_id into the graph). 'Items learned: 0' or an empty list_sessions means no training has happened yet in this account, not that the user has nothing worth learning — check mind_query for what's already there before starting a duplicate session.",
     {
       action: z
         .enum(["start", "chat", "status", "list_sessions", "pause", "resume", "save_chat"])
@@ -2830,7 +2830,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_profile",
-    "Manage your MIND profile, AI prompt settings, and model preferences. Update your bio, set custom system prompts for chat and thought generation, and choose your preferred LLM model.",
+    "Manage the user's own MIND profile, public-chat prompt, and model preferences — bio, display name, the system prompt used at their public /m/{username} chat surface, and their default LLM model. This is account/identity settings, not knowledge-graph content — for what MIND knows about the user, use mind_context or mind_query instead. Actions: get/update (profile fields), get_chat_prompt/set_chat_prompt, get_thought_prompt/set_thought_prompt, get_model/set_model/list_models. 'No custom prompt set' on get_chat_prompt/get_thought_prompt means the platform default applies, not that chat is unconfigured — call list_models before set_model if unsure a model id is valid, since an unrecognized id fails at the provider, not here.",
     {
       action: z
         .enum([
@@ -2964,7 +2964,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_insights",
-    "Access insights from MIND's Autonomous Learning Engine — patterns detected in your knowledge graph, weekly summaries, and proactive intelligence. Also trigger on-demand analysis.",
+    "Read what MIND's Autonomous Learning Engine has already noticed about the user without being asked — patterns, weekly summaries, and proactive intelligence generated in the background — or trigger a fresh analysis pass on demand. Reach for this when the user asks \"what have you noticed\" or \"anything I'm missing\"; reach for mind_query when you already know what you're looking for. Actions: list (recent insights), unread_count, view (read one, marks it seen), feedback (rate helpful/not_helpful — tunes future insights), analyze (trigger a new pass now), weekly_summary, context (raw ALE state). 'No insights available' means the engine hasn't generated any yet for this account or period — call analyze to trigger a fresh pass rather than assuming nothing is happening in the graph.",
     {
       action: z
         .enum(["list", "unread_count", "view", "feedback", "analyze", "weekly_summary", "context"])
@@ -3069,7 +3069,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_automate",
-    "Create and manage automations in MIND — scheduled workflows, event triggers, and rules that run automatically. Connect CRM events to actions, schedule recurring tasks, and build custom pipelines.",
+    "Create and manage MIND-native automations — scheduled or event-triggered rules that run without a human or agent invoking them each time (e.g. a weekly CRM digest, a webhook that logs an event to a life project). This is for recurring MIND-internal work, not a general task scheduler for external systems. Actions: list/create/update/delete, run_now (fire immediately for testing), history (execution log). `trigger_config`/`action_config` are JSON strings, not objects — pass valid JSON or the call throws. An empty list means no automations are configured in this account yet, not that scheduled work isn't happening elsewhere.",
     {
       action: z
         .enum(["list", "create", "update", "delete", "run_now", "history"])
@@ -3216,7 +3216,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_notify",
-    "Read and manage MIND notifications — alerts, reminders, insight notifications, and system messages.",
+    "Read and manage the user's MIND notification inbox — alerts, reminders, insight pings, and system messages generated by other MIND features. It is not a way to send a notification yourself. Use this to check what MIND has already surfaced to the user, or to clear it down; for the underlying event (why an insight fired, what an alert refers to) follow up with the originating tool (mind_insights, mind_sense, etc.) or mind_query. Actions: list, mark_read, mark_all_read, stats (total/unread/read counts). 'No notifications' or unread:0 means nothing has been pushed to the inbox — a quiet inbox and a quiet graph are different claims.",
     {
       action: z
         .enum(["list", "mark_read", "mark_all_read", "stats"])
