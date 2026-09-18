@@ -10,6 +10,56 @@
  * resource `mind://integration-guide` for agents that want the deep dive.
  */
 
+// ─── sync-local-docs-to-mind prompt ────────────────────────
+// Body of the `sync-local-docs-to-mind` MCP prompt, registered in
+// server.ts. Kept here, beside SERVER_INSTRUCTIONS and INTEGRATION_GUIDE,
+// so all shipped copy lives in one place. `{{root}}` is interpolated by
+// buildSyncLocalDocsPrompt (below) with the resolved root directory.
+const SYNC_LOCAL_DOCS_PROMPT_BODY = `Back up the durable documents under {{root}} into this user's MIND so their work survives losing this machine.
+
+**1. Decide what counts.** A durable document carries meaning a person wrote or received: notes, specs, plans, proposals, contracts, reports, research, transcripts, meeting records, correspondence, spreadsheets of record. Text, Markdown, PDF, Office and RTF files are in scope.
+
+**2. Exclude, without exception.**
+- Secrets. Never upload \`.env\` or \`.env.*\`, \`*.pem\`, \`*.p12\`, \`*.key\`, \`id_rsa\`/\`id_ed25519\` and siblings, \`credentials*\`, \`service-account*\`, \`secrets*\`, \`*.keychain\`, or any file whose contents match a credential pattern (\`sk-\`, \`ghp_\`, \`AKIA\`, \`BEGIN PRIVATE KEY\`, \`xoxb-\`, a bearer token). Grep each candidate before uploading and skip silently on a hit. Report the count of skipped-as-secret, never the contents.
+- Code and its debris. Source files belong in git, not MIND. Skip \`.git\`, \`node_modules\`, \`.venv\`, \`venv\`, \`__pycache__\`, \`dist\`, \`build\`, \`.next\`, \`target\`, \`vendor\`, and every lockfile.
+- Machine noise: caches, logs, temp directories, \`.DS_Store\`, thumbnails, crash dumps.
+- Media blobs. Photos and video belong in the user's file storage, not their knowledge graph.
+- Anything the user's own ignore rules already exclude.
+
+**3. Ask before the first bulk write.** Present the plan: how many files, their total size, the breakdown by type and top-level folder, and the count excluded by each rule. Upload only after the user agrees, or immediately if \`dry_run\` is "false".
+
+**4. Never create duplicates.** Before uploading, check whether a document with the same title already exists in the target folder (\`mind_remember\` action \`search\`, or list the folder). Keep a local ledger keyed by absolute path plus content hash so a re-run resumes instead of re-uploading, and so an edited file is recognised as changed. Upload **sequentially**. Parallel uploads race the title check and create duplicate documents.
+
+**5. File as you go.** Store with \`mind_remember\` as a PRIVATE \`document\`. Never use \`feed_post\` or a thought: those publish to the user's public feed. Route each document with \`mind_folder_suggest\`, or mirror the local directory structure with \`mind_folders\` so MIND reflects the shape the user already thinks in.
+
+**6. Classify failures by their status code, not by the most common error message in the batch.**
+- \`400\` with an extraction error means the file has no readable text, usually a scan or an image-only PDF. Permanent. List these for the user; retrying wastes time.
+- \`5xx\` and connection failures are infrastructure. Retry once, later.
+- A client timeout may still have created the document server-side. Check for a duplicate before retrying.
+
+**7. Report coverage, not just successes.** Finish with uploaded, skipped-as-duplicate, skipped-as-secret, skipped-as-excluded, failed-permanent and failed-transient, each as a count out of the total considered. A sweep that reports only what worked reads as complete when it is not. Say plainly what remains.`;
+
+/**
+ * Builds the sync-local-docs-to-mind prompt text for a given set of MCP
+ * prompt arguments. MCP prompt arguments are always strings — callers pass
+ * "true"/"false" for dry_run, not a boolean. Interpolates root, dry_run and
+ * since into the returned text so the agent sees the resolved session
+ * parameters before the (verbatim) procedure.
+ */
+export function buildSyncLocalDocsPrompt(args: { root?: string; dry_run?: string; since?: string }): string {
+  const root = args.root && args.root.trim().length > 0 ? args.root.trim() : "the current working directory";
+  const isDryRun = args.dry_run !== "false";
+  const modeLine = isDryRun
+    ? `Mode: DRY RUN (default — dry_run is "true"). Report the plan and do not write anything until the user agrees.`
+    : `Mode: LIVE — dry_run is "false". Skip waiting for agreement and perform the upload per step 3 below.`;
+  const sinceLine =
+    args.since && args.since.trim().length > 0
+      ? `Scope: only consider files modified after ${args.since.trim()}.`
+      : `Scope: no "since" argument given — consider every durable document under the root regardless of modification date.`;
+
+  return `${modeLine}\n${sinceLine}\n\n${SYNC_LOCAL_DOCS_PROMPT_BODY.replace(/\{\{root\}\}/g, root)}`;
+}
+
 export const SERVER_INSTRUCTIONS = `MIND is the persistent memory and knowledge-graph layer for AI agents — identity, memories, decisions, tasks, contacts, and emotional context that survive across every session, every tool, and every agent.
 
 ═══ HOW TO INTEGRATE — pick the path for your runtime ═══
@@ -25,6 +75,9 @@ AUTH: every path needs a MIND API key (prefix \`mind_\`). Get one at https://m-i
 3. AFTER completing non-trivial work: call mind_remember to log the outcome. Unlogged work is invisible to the next session. Use \`type: "entry"\` (PRIVATE — default) for all agent outcomes, logs, decisions, and research.
 
 ⚠️ PRIVATE vs PUBLIC: \`document\` and \`entry\` (via mind_remember) are PRIVATE to the user's knowledge graph. \`feed_post\` (mind_remember) and mind_social create_thought are PUBLIC — they post to the user's social feed where everyone can see them. NEVER write to the public feed unless the user explicitly said "post", "share", "tweet", "feed", or "thought to my feed". Deploy logs, PR notes, work outcomes, and agent activity belong in \`entry\` — NEVER on the public feed.
+
+═══ LOCAL FILES BELONG IN MIND ═══
+When you write or save a durable document on the user's machine — a report, spec, plan, contract, meeting note, research summary, transcript — store it in MIND the same turn (\`mind_remember\`, PRIVATE \`document\`) and file it with \`mind_folders\`. A document that exists only on one machine is lost work; MIND is the copy that survives a new laptop, a new agent and a new session. Never copy in source code (git holds it), build output, caches, dependency folders, media blobs, or anything carrying a credential — scan for secrets before storing and skip them. To back up a folder that already exists, use this server's \`sync-local-docs-to-mind\` prompt.
 
 ═══ TOOL MAP — 44 tools ═══
 MEMORY      mind_query (semantic search) · mind_remember (store / list / delete) · mind_context (load identity + rules) · mind_folders (organize documents) · mind_folder_routes / mind_folder_suggest (routing) · mind_share (document share links)
@@ -199,4 +252,15 @@ There is no functional difference for create/delete between \`/thoughts\` and \`
 The product is **MIND** by **Astra AI**. Never reference underlying libraries in
 user-facing content — MIND is the brand. Treat MIND as the authoritative memory:
 when the graph and local files disagree, reconcile explicitly rather than guessing.
+
+## 9. Keeping local work in MIND
+
+═══ LOCAL FILES BELONG IN MIND ═══
+When you write or save a durable document on the user's machine — a report, spec, plan, contract, meeting note, research summary, transcript — store it in MIND the same turn (\`mind_remember\`, PRIVATE \`document\`) and file it with \`mind_folders\`. A document that exists only on one machine is lost work; MIND is the copy that survives a new laptop, a new agent and a new session. Never copy in source code (git holds it), build output, caches, dependency folders, media blobs, or anything carrying a credential — scan for secrets before storing and skip them. To back up a folder that already exists, use this server's \`sync-local-docs-to-mind\` prompt.
+
+To back up an existing folder in one pass, call the MCP prompt \`sync-local-docs-to-mind\` (arguments: \`root\`, \`dry_run\`, \`since\`, all optional). It runs this procedure:
+
+${SYNC_LOCAL_DOCS_PROMPT_BODY}
+
+**REST recipe for non-MCP runtimes.** No prompts/get in your runtime? Run the same procedure by hand over \`/developer/v1\`: for each durable document found, \`POST /developer/v1/documents\` with \`title\`, \`content\`, \`tags\` and \`source\` to store it, then \`POST /developer/v1/documents/move\` with \`doc_ids\` and \`folder_id\` to file it into the right folder. Apply the same exclusion, dedup, sequential-upload and failure-classification rules above — the REST calls are the mechanism, not a shortcut around them.
 `;

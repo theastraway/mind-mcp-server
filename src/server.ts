@@ -37,7 +37,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MindApiError, MindClient } from "./mind-client.js";
-import { SERVER_INSTRUCTIONS, INTEGRATION_GUIDE } from "./integration-guide.js";
+import { SERVER_INSTRUCTIONS, INTEGRATION_GUIDE, buildSyncLocalDocsPrompt } from "./integration-guide.js";
 
 // ─── Shared MCP result helpers ──────────────────────────────
 // Prefer these over inline `catch (err) → "mind_x error: ${err}"` in new
@@ -112,6 +112,40 @@ export function createMindMcpServer(client: MindClient): McpServer {
           uri: uri.href,
           mimeType: "text/markdown",
           text: INTEGRATION_GUIDE,
+        },
+      ],
+    }),
+  );
+
+  // ─── sync-local-docs-to-mind prompt ─────────────────────
+  // Standard prompt shipped WITH the server so any connected agent can back
+  // up the user's durable local documents into MIND without being taught
+  // the procedure from scratch. Body lives in integration-guide.ts beside
+  // SERVER_INSTRUCTIONS and INTEGRATION_GUIDE so all shipped copy is in one
+  // place. MCP prompt arguments are always strings.
+  server.registerPrompt(
+    "sync-local-docs-to-mind",
+    {
+      title: "Sync local documents into MIND",
+      description:
+        "Back up every durable document on this machine into the user's MIND, skipping code, junk and secrets. Safe by default: reports what it would upload before uploading anything.",
+      argsSchema: {
+        root: z.string().optional().describe("Directory to scan. Default: the current working directory."),
+        dry_run: z
+          .string()
+          .optional()
+          .describe('"true" (default) reports the plan without writing. "false" performs the upload.'),
+        since: z.string().optional().describe("Only consider files modified after this ISO date."),
+      },
+    },
+    async ({ root, dry_run, since }) => ({
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: buildSyncLocalDocsPrompt({ root, dry_run, since }),
+          },
         },
       ],
     }),
