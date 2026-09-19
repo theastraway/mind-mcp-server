@@ -39,7 +39,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MindApiError, MindClient } from "./mind-client.js";
-import { SERVER_INSTRUCTIONS, INTEGRATION_GUIDE, buildSyncLocalDocsPrompt, buildSyncAgentSessionPrompt } from "./integration-guide.js";
+import {
+  SERVER_INSTRUCTIONS,
+  INTEGRATION_GUIDE,
+  AGENT_STANDARD_MD,
+  buildSyncLocalDocsPrompt,
+  buildSyncAgentSessionPrompt,
+} from "./integration-guide.js";
 
 // ─── Shared MCP result helpers ──────────────────────────────
 // Prefer these over inline `catch (err) → "mind_x error: ${err}"` in new
@@ -119,6 +125,32 @@ export function createMindMcpServer(client: MindClient): McpServer {
     }),
   );
 
+  // ─── mind://agent-standard ──────────────────────────────
+  // The full MIND Agent Operating Standard (AGENTS.md, verbatim — see
+  // AGENT_STANDARD_MD in ./integration-guide.ts for provenance and the
+  // refresh recipe). SERVER_INSTRUCTIONS names this resource as mandatory
+  // reading in its "═══ MANDATORY PROTOCOLS ═══" section so an unauthenticated
+  // client sees the pointer even before it can read this resource.
+  server.registerResource(
+    "agent-standard",
+    "mind://agent-standard",
+    {
+      title: "The MIND Agent Operating Standard",
+      description:
+        "The full, binding operating constitution for a MIND-connected agent (AGENTS.md, verbatim) — Law Zero, the boot protocol, session sync, the inactivity and termination protocols, the action-time gates, the sense catalog, and the memory contract. SERVER_INSTRUCTIONS names this as mandatory reading; this resource is the complete text.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/markdown",
+          text: AGENT_STANDARD_MD,
+        },
+      ],
+    }),
+  );
+
   // ─── sync-local-docs-to-mind prompt ─────────────────────
   // Standard prompt shipped WITH the server so any connected agent can back
   // up the user's durable local documents into MIND without being taught
@@ -180,6 +212,33 @@ export function createMindMcpServer(client: MindClient): McpServer {
           content: {
             type: "text" as const,
             text: buildSyncAgentSessionPrompt({ runtime, source_key }),
+          },
+        },
+      ],
+    }),
+  );
+
+  // ─── adopt-agent-standard prompt ─────────────────────────
+  // Same content as the mind://agent-standard resource (AGENT_STANDARD_MD —
+  // see integration-guide.ts for provenance and the refresh recipe), offered
+  // as a prompt for clients that call prompts/get rather than reading MCP
+  // resources. SERVER_INSTRUCTIONS points every connecting agent at whichever
+  // of the two ("the resource ... or the adopt-agent-standard prompt") its
+  // host actually supports.
+  server.registerPrompt(
+    "adopt-agent-standard",
+    {
+      title: "Adopt the MIND Agent Operating Standard",
+      description:
+        "Returns the full MIND Agent Operating Standard (AGENTS.md, verbatim) — Law Zero, the boot protocol, session sync, the inactivity and termination protocols, the action-time gates, the sense catalog, and the memory contract. Read this before acting on behalf of an owner for the first time.",
+    },
+    async () => ({
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: AGENT_STANDARD_MD,
           },
         },
       ],
