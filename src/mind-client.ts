@@ -1116,6 +1116,22 @@ export class MindClient {
     return this.request("POST", "/developer/v1/accounts", { label });
   }
 
+  /** Mint a delegated JWT to operate as target MIND (POST /developer/v1/accounts/switch). */
+  async switchMind(username: string): Promise<{
+    access_token: string;
+    token_type: string;
+    account: {
+      username: string;
+      workspace_id: string;
+      label: string;
+      avatar_url?: string | null;
+      role: string;
+      is_self: boolean;
+    };
+  }> {
+    return this.request("POST", "/developer/v1/accounts/switch", { username });
+  }
+
   async deleteMind(username: string): Promise<{ status: string; username: string }> {
     return this.request(
       "DELETE",

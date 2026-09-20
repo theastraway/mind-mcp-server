@@ -4635,12 +4635,12 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_accounts",
-    "Manage multi-MIND accounts. A 'MIND' is a knowledge-graph account; one person can own or be granted access to many. Use to discover every MIND you can access (list), spin up a new one (create), permanently delete one (delete), see who can access a MIND (members), grant an existing user access (grant), or email an invitation (invite).",
+    "Manage multi-MIND accounts. A 'MIND' is a knowledge-graph account; one person can own or be granted access to many. Use to discover every MIND you can access (list), spin up a new one (create), permanently delete one (delete), see who can access a MIND (members), grant an existing user access (grant), email an invitation (invite), or switch into a granted MIND (switch — POST /developer/v1/accounts/switch; returns access_token JWT). Protocol: AstraAI=HQ, MIND=product, anthonyjconti=personal.",
     {
       action: z
-        .enum(["list", "create", "delete", "members", "grant", "invite"])
+        .enum(["list", "create", "delete", "members", "grant", "invite", "switch"])
         .describe(
-          "list (every MIND you can access), create (a new MIND you own), delete (permanently delete a MIND you own), members (owners/viewers of a MIND), grant (give an existing user access), invite (email an invitation)"
+          "list (every MIND you can access), create (a new MIND you own), delete (permanently delete a MIND you own), members (owners/viewers of a MIND), grant (give an existing user access), invite (email an invitation), switch (activate/enter a granted MIND — requires mind_username; returns access_token)"
         ),
       label: z
         .string()
@@ -4649,7 +4649,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
       mind_username: z
         .string()
         .optional()
-        .describe("Username of the MIND to manage (required for delete/members/grant/invite)"),
+        .describe("Username of the MIND to manage (required for delete/members/grant/invite/switch)"),
       grantee_username: z
         .string()
         .optional()
@@ -4790,6 +4790,33 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 {
                   type: "text" as const,
                   text: `✅ Invitation sent to ${res.email} (${res.role}) for @${mind_username}.`,
+                },
+              ],
+            };
+          }
+          case "switch": {
+            if (!mind_username) {
+              return {
+                content: [{ type: "text" as const, text: "Error: mind_username is required for switch" }],
+                isError: true,
+              };
+            }
+            const res = await client.switchMind(mind_username);
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify(
+                    {
+                      switched: true,
+                      account: res.account,
+                      access_token: res.access_token,
+                      token_type: res.token_type,
+                      note: "Bearer access_token operates as this MIND for session JWT paths. Hosted API-key MCP remains the key owner unless the host applies the token.",
+                    },
+                    null,
+                    2
+                  ),
                 },
               ],
             };
