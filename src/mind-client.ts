@@ -2666,6 +2666,36 @@ export class MindClient {
       qp
     );
   }
+
+  // ─── Agent Session sharing ──────────────────────────────
+  // Share a live session with another MIND account as "viewer" (read-only)
+  // or "replier" (viewer + may reply, which reaches the agent's next turn).
+  // Live mirror, never a snapshot — see backend/services/agent_session_access.py.
+
+  async createAgentSessionShare(
+    sessionId: string,
+    req: { grantee_username: string; role?: AgentSessionShareRole }
+  ): Promise<AgentSessionShare> {
+    return this.request(
+      "POST",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/shares`,
+      req
+    );
+  }
+
+  async listAgentSessionShares(sessionId: string): Promise<ListAgentSessionSharesResponse> {
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/shares`
+    );
+  }
+
+  async revokeAgentSessionShare(sessionId: string, shareId: string): Promise<void> {
+    await this.request(
+      "DELETE",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/shares/${encodeURIComponent(shareId)}`
+    );
+  }
 }
 
 // ─── Task types ───────────────────────────────────────────
@@ -3140,6 +3170,9 @@ export interface AgentSessionRecord {
   created_at: string;
   updated_at: string;
   meta?: Record<string, unknown>;
+  /** Present on list/get responses once sharing is live — see
+   * AgentSessionSharedMeta. */
+  shared?: AgentSessionSharedMeta;
 }
 
 export interface OpenAgentSessionRequest {
@@ -3183,8 +3216,42 @@ export interface ListAgentSessionsResponse {
 
 export interface GetAgentSessionResponse extends AgentSessionRecord {
   messages: AgentSessionMessage[];
+  /** "owner" | "viewer" | "replier" — the caller's resolved role on this
+   * session (always "owner" before sharing existed; additive field). */
+  viewer_role?: "owner" | AgentSessionShareRole;
 }
 
 export interface AgentSessionInboxResponse {
   pending_replies: AgentSessionMessage[];
+}
+
+// ─── Agent Session sharing types ────────────────────────────
+// See backend/services/agent_session_access.py. "owner" is never a grantable
+// role — it is derived solely from the session's own user_id.
+
+export type AgentSessionShareRole = "viewer" | "replier";
+
+export interface AgentSessionShare {
+  id: string;
+  session_id: string;
+  owner_user_id: string;
+  grantee_username: string;
+  grantee_label?: string;
+  role: AgentSessionShareRole;
+  granted_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ListAgentSessionSharesResponse {
+  session_id: string;
+  shares: AgentSessionShare[];
+}
+
+/** Present on a session row/detail that is shared TO the caller — absent
+ * (or `shared_with_me: false`) for a session the caller owns. */
+export interface AgentSessionSharedMeta {
+  shared_with_me: boolean;
+  shared_by?: string;
+  role?: AgentSessionShareRole;
 }

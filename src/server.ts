@@ -3393,11 +3393,25 @@ export function createMindMcpServer(client: MindClient): McpServer {
       "3) IDLE — MIND marks the session idle after 30 minutes with no append; the next append revives it, nothing to do meanwhile. " +
       "4) TERMINATE — on exit, compaction, or \"done\", call action=close with a summary (what was asked, what shipped with ids/PR numbers, what is still undone); MIND mirrors the transcript into your Sessions folder as a document. " +
       "5) HANDOFF — to pass the conversation to another agent, call action=handoff with to_source_key=<their toggle>; they see it in their session list with the transcript as context. " +
+      "6) SHARE — to let another MIND user follow this session, call action=share with grantee_username and role (\"viewer\" read-only, the default, or \"replier\" which also lets them reply — a reply is a live action that wakes your process via wake_url, so grant it deliberately). It's a live mirror, never a copy: they always see the current transcript, and revoking (action=revoke_share) removes their access immediately. Never share a session with anyone who shouldn't see its full transcript.\n" +
       "Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads.\n\n" +
-      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key).",
+      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only).",
     {
       action: z
-        .enum(["open", "append", "close", "list", "get", "reply", "inbox", "handoff", "sources"])
+        .enum([
+          "open",
+          "append",
+          "close",
+          "list",
+          "get",
+          "reply",
+          "inbox",
+          "handoff",
+          "sources",
+          "share",
+          "list_shares",
+          "revoke_share",
+        ])
         .describe("Which agent-session operation to perform."),
       // open
       source_key: z.string().optional().describe("Your assigned MIND Chat sidebar toggle slug, e.g. \"claude-code-1\" — required for open; also filters list; also required for sources action=create (as the new source's key)."),
@@ -3444,6 +3458,10 @@ export function createMindMcpServer(client: MindClient): McpServer {
       color: z.string().optional().describe("Sidebar chip color — sources action=create/update."),
       wake_url: z.string().optional().describe("Optional push endpoint MIND POSTs {session_id, reply} to (fire-and-forget, 5s timeout) when the user replies — sources action=create/update."),
       force: z.boolean().optional().describe("sources action=delete: also delete the source's sessions instead of failing 409 when sessions exist."),
+      // share / list_shares / revoke_share
+      grantee_username: z.string().optional().describe("MIND username to share with — required for share."),
+      role: z.enum(["viewer", "replier"]).optional().describe("Role to grant — share (default \"viewer\"). \"replier\" additionally allows the grantee to reply, which reaches you via wake_url."),
+      share_id: z.string().optional().describe("Share grant id (from share or list_shares) — required for revoke_share."),
     },
     async (args) => {
       const { action } = args;
@@ -3579,6 +3597,32 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 return err(`Unknown source_action: ${_exhaustive}`);
               }
             }
+          }
+
+          case "share": {
+            const { session_id, grantee_username } = args;
+            if (!session_id) return err("Error: 'session_id' is required for share.");
+            if (!grantee_username) return err("Error: 'grantee_username' is required for share.");
+            return ok(
+              await client.createAgentSessionShare(session_id, {
+                grantee_username,
+                role: args.role,
+              })
+            );
+          }
+
+          case "list_shares": {
+            const { session_id } = args;
+            if (!session_id) return err("Error: 'session_id' is required for list_shares.");
+            return ok(await client.listAgentSessionShares(session_id));
+          }
+
+          case "revoke_share": {
+            const { session_id, share_id } = args;
+            if (!session_id) return err("Error: 'session_id' is required for revoke_share.");
+            if (!share_id) return err("Error: 'share_id' is required for revoke_share.");
+            await client.revokeAgentSessionShare(session_id, share_id);
+            return ok({ ok: true, session_id, share_id });
           }
 
           default: {
