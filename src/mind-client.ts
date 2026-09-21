@@ -3140,6 +3140,11 @@ export interface AgentSessionSource {
   updated_at: string;
   last_seen_at?: string | null;
   session_count: number;
+  /** The installation half of "runtime x installation" — absent on a
+   * source predating the redesign, or a manually-created custom source. */
+  installation_key?: string | null;
+  installation_kind?: string | null;
+  installation_label?: string | null;
 }
 
 export interface AgentSessionRecord {
@@ -3170,10 +3175,27 @@ export interface AgentSessionRecord {
   created_at: string;
   updated_at: string;
   meta?: Record<string, unknown>;
+  /** Who ran this session — unconditional on runtime, see
+   * OpenAgentSessionRequest.agent. */
+  agent_key?: string | null;
+  agent_label?: string | null;
   /** Present on list/get responses once sharing is live — see
    * AgentSessionSharedMeta. */
   shared?: AgentSessionSharedMeta;
 }
+
+/** Explicit device declaration — see services/agent_sessions.py's
+ * infer_device (closed DEVICE_KINDS vocabulary; an out-of-vocabulary kind
+ * is dropped server-side, never passed through raw). */
+export interface AgentSessionDeviceHint {
+  kind?: "mac" | "linux" | "windows" | "droplet" | "cloud" | "container" | "ci" | "phone" | "unknown";
+  label?: string;
+  host?: string;
+}
+
+/** Who ran the session — an attribute OF the session, never a source key.
+ * Bare string used as both key and label, or an explicit {key, label}. */
+export type AgentSessionAgentHint = string | { key: string; label?: string };
 
 export interface OpenAgentSessionRequest {
   source_key: string;
@@ -3187,6 +3209,10 @@ export interface OpenAgentSessionRequest {
   branch?: string;
   model?: string;
   tags?: string[];
+  device?: AgentSessionDeviceHint;
+  platform?: string;
+  env?: Record<string, unknown>;
+  agent?: AgentSessionAgentHint;
 }
 
 export interface OpenAgentSessionResponse {
@@ -3196,6 +3222,12 @@ export interface OpenAgentSessionResponse {
   title: string;
   pending_replies: AgentSessionMessage[];
   tail: AgentSessionMessage[];
+  /** The session's REAL (derived) source key — may differ from the
+   * source_key you posted if it resolved through a legacy alias or fresh
+   * derivation (e.g. posting "dae" resolves to "grok@cloud"). */
+  source_key?: string;
+  agent_key?: string | null;
+  agent_label?: string | null;
 }
 
 export interface AppendAgentSessionResponse {

@@ -3388,7 +3388,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
     "mind_sessions",
     "Log THIS agent's own live session into MIND Chat → Agents, so Anthony can read the transcript and reply — his reply reaches you on your next turn. Distinct from mind_remember (one durable fact) and mind_train (teaching the KG): this is the live, turn-by-turn session log, mirrored into a MIND document when you close it.\n\n" +
       "PROTOCOL (do this every session): " +
-      "1) CONNECT — as soon as mind_context succeeds, call action=open with source_key (your assigned MIND Chat toggle, e.g. \"claude-code-1\"), external_session_id (your runtime's own session id), runtime, title (first user ask, 6-10 words), machine/cwd/repo/branch/model. If `resumed` is true, read `tail` before answering, and answer everything in `pending_replies` first — those arrived while you were away. " +
+      "1) CONNECT — as soon as mind_context succeeds, call action=open with source_key (your assigned MIND Chat toggle, e.g. \"claude-code-1\"), external_session_id (your runtime's own session id), runtime, title (first user ask, 6-10 words), machine/cwd/repo/branch/model. Your real source is derived from runtime x installation (device/platform/env), never the literal source_key — the response's own `source_key` tells you what it actually resolved to. If you're a named agent within a shared runtime (a scheduled job, a persona, a bot on a shared account), pass `agent` (a bare name, or {key,label}) so sessions attribute to WHO ran them, not just where — this works for every runtime, not only shared/cloud ones. If `resumed` is true, read `tail` before answering, and answer everything in `pending_replies` first — those arrived while you were away. " +
       "2) EVERY TURN — after you finish replying, call action=append with the user's message and your final reply (role user / assistant); tool calls go in as role=tool one-line summaries, never raw payloads. Check `pending_replies` on the response and answer them next turn. action=reply is a shortcut for appending a single assistant-role message when you have no user message to log alongside it. " +
       "3) IDLE — MIND marks the session idle after 30 minutes with no append; the next append revives it, nothing to do meanwhile. " +
       "4) TERMINATE — on exit, compaction, or \"done\", call action=close with a summary (what was asked, what shipped with ids/PR numbers, what is still undone); MIND mirrors the transcript into your Sessions folder as a document. " +
@@ -3425,6 +3425,20 @@ export function createMindMcpServer(client: MindClient): McpServer {
       branch: z.string().optional().describe("Git branch — open."),
       model: z.string().optional().describe("LLM model in use — open."),
       tags: z.array(z.string()).optional().describe("Freeform tags — open."),
+      device: z
+        .object({
+          kind: z.enum(["mac", "linux", "windows", "droplet", "cloud", "container", "ci", "phone", "unknown"]).optional(),
+          label: z.string().optional(),
+          host: z.string().optional(),
+        })
+        .optional()
+        .describe("Explicit device declaration — open/append. Wins outright over machine/platform/env inference; an out-of-vocabulary `kind` is dropped server-side rather than passed through raw."),
+      platform: z.string().optional().describe("Your own platform string (sys.platform / platform.system() / a mobile OS name, e.g. \"darwin\", \"linux\", \"win32\", \"ios\") — open/append. Used to infer device kind when `device` isn't supplied."),
+      env: z.record(z.string(), z.any()).optional().describe("Environment markers you read from your OWN process (GITHUB_ACTIONS, RENDER, KUBERNETES_SERVICE_HOST, DROPLET_ID, DOCKERENV, ...) — open/append. Used to infer device kind (CI runner, cloud, container, droplet) when `device` isn't supplied."),
+      agent: z
+        .union([z.string(), z.object({ key: z.string(), label: z.string().optional() })])
+        .optional()
+        .describe("Who is actually running this session — an attribute OF the session, never a source key, and unconditional on runtime (a claude-code cron run can carry agent=\"Chief of Staff\" exactly like a grok run carries agent=\"Dae\"). Bare string used as both key and label, or {key, label}. Falls back to a legacy alias for a bot-shaped source_key (\"dae\"→Dae, \"meter\"→Meter, \"grok-bot\"→Helm, \"n8n\"→n8n), then to the runtime's own display name — open only."),
       // append / reply
       session_id: z.string().optional().describe("Session id returned by open — required for append/close/get/inbox/handoff."),
       messages: z
@@ -3484,6 +3498,10 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 branch: args.branch,
                 model: args.model,
                 tags: args.tags,
+                device: args.device,
+                platform: args.platform,
+                env: args.env,
+                agent: args.agent,
               })
             );
           }
