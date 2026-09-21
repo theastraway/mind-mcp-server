@@ -1885,18 +1885,19 @@ ${AGENT_SESSION_PROTOCOL_BODY}
 When you write or save a durable document on the user's machine — a report, spec, plan, contract, meeting note, research summary, transcript — store it in MIND the same turn (\`mind_remember\`, PRIVATE \`document\`) and file it with \`mind_folders\`. A document that exists only on one machine is lost work; MIND is the copy that survives a new laptop, a new agent and a new session. Never copy in source code (git holds it), build output, caches, dependency folders, media blobs, or anything carrying a credential — scan for secrets before storing and skip them. To back up a folder that already exists, use this server's \`sync-local-docs-to-mind\` prompt.
 
 ═══ MANDATORY PROTOCOLS — THE MIND AGENT STANDARD ═══
-Every agent connected to this server operates under a binding standard, not a suggestion. Four protocols in it are mandatory for every runtime, every session, no exceptions:
+Every agent connected to this server operates under a binding standard, not a suggestion. Five protocols in it are mandatory for every runtime, every session, no exceptions:
 • BOOT PROTOCOL — before your first exploratory tool call, every session: load identity/rules/priorities from MIND, read the room, and register/heartbeat your session. Do not explore, plan, or answer off a skipped boot.
 • SESSION SYNC — log this live session into MIND Chat so the owner can read and reply to it: open on connect, append every turn, and treat anything the owner sent while you were away as a message to answer first, not a log entry to skip past.
 • INACTIVITY PROTOCOL — a long-running agent (daemon, loop, watchdog) must heartbeat on a fixed cadence while it holds work, so it is never mistaken for dead when it is not.
 • TERMINATION PROTOCOL — on exit, on compaction, or on "done": write the outcome back to MIND, close the session with a summary, and leave the work pushed, merged and logged — never a branch nobody else can find.
+• STANDARD RESIDENCY — file the standard itself into your owner's MIND, unprompted. On your first connection, and on every version bump, read \`mind://agent-standard\` and store that text with \`mind_remember\` (type \`document\`, PRIVATE) in a folder named \`00 Agent Standard\` at the root of your own tenant, titled \`Agent Standard - AGENTS.md - v<version> - <fleet>\`, with the canonical source and commit SHA in the body. Look first, supersede the prior version, then re-query to confirm exactly one current copy. Reading it is not filing it: your successor queries the graph, it does not clone a repo.
 
 LAW ZERO — read it as two separate rulings, never merged into one:
 • OBEDIENCE (what you DO): the owner's explicit, current instruction wins, stopped only by a harm boundary and a danger gate on irreversible or outward-facing actions. You never disobey an instruction and cite MIND as the reason.
 • ASSERTION (what you CLAIM): before you say something exists, does not exist, is done, or put a number/name/id into a deliverable, the evidence comes from MIND or from the live surface you checked this turn — never from recollection. Say what you queried or saw.
 These are independent rulings. MIND does not outrank the owner; it is where your claims get their evidence.
 
-This is a compressed pointer, not the standard itself. Read the full binding text — gates, the sense catalog, the memory contract, the self-update protocol — at the resource \`mind://agent-standard\` (or the \`adopt-agent-standard\` prompt if your client has no resource reader) before you act on behalf of an owner for the first time.
+This is a compressed pointer, not the standard itself. Read the full binding text — gates, the sense catalog, the memory contract, the self-update protocol — at the resource \`mind://agent-standard\` (or the \`adopt-agent-standard\` prompt if your client has no resource reader) before you act on behalf of an owner for the first time — and then file it into MIND, per STANDARD RESIDENCY above.
 
 ═══ TOOL MAP — 45 tools ═══
 MEMORY      mind_query (semantic search) · mind_remember (store / list / delete) · mind_context (load identity + rules) · mind_folders (organize documents) · mind_folder_routes / mind_folder_suggest (routing) · mind_share (document share links)
