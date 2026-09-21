@@ -15,6 +15,8 @@
  * Checked (all must equal package.json "version"):
  *   - mcp-server/server.json          → "version" and packages[0].version (MCP registry manifest)
  *   - mcp-server/src/server.ts        → the McpServer({ name: "mind", version: "…" }) handshake string
+ *   - mcp-server/package-lock.json    → root "version" and packages[""].version — a mismatch here
+ *                                       makes `npm ci` fail in CI with EUSAGE
  *   - backend/data/mcp_tools.json     → serverInfo.version (the REMOTE hosted /mcp handshake) — soft-checked; only if present
  */
 import { readFileSync } from "node:fs";
@@ -54,6 +56,17 @@ try {
   else if (m[1] !== expected) errors.push(`src/server.ts serverInfo.version=${m[1]} (expected ${expected})`);
 } catch (e) {
   errors.push(`could not read src/server.ts: ${e.message}`);
+}
+
+// package-lock.json — npm records the root package version in two places, and
+// `npm ci` refuses to install when they disagree with package.json.
+try {
+  const lock = JSON.parse(read(resolve(root, "package-lock.json")));
+  if (lock.version !== expected) errors.push(`package-lock.json version=${lock.version} (expected ${expected})`);
+  const rootPkg = lock.packages?.[""]?.version;
+  if (rootPkg !== expected) errors.push(`package-lock.json packages[""].version=${rootPkg} (expected ${expected})`);
+} catch (e) {
+  errors.push(`could not read package-lock.json: ${e.message}`);
 }
 
 // backend/data/mcp_tools.json — the REMOTE hosted /mcp handshake version (soft: only if repo layout present)

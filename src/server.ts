@@ -94,7 +94,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
   const server = new McpServer(
     {
       name: "mind",
-      version: "0.28.0",
+      version: "0.29.0",
     },
     {
       // Returned to every client in the MCP `initialize` response — the first
