@@ -3,6 +3,7 @@
   "name": "io.github.theastraway/mind",
   "title": "MIND",
   "description": "MIND knowledge-graph memory for agents. 44 tools: CRM, Life, MoneyMIND, Budget, Sheets, Email, Sign.",
+  "websiteUrl": "https://www.m-i-n-d.ai",
   "repository": {
     "url": "https://github.com/theastraway/mind-mcp-server",
     "source": "github"
