@@ -38,7 +38,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { MindApiError, MindClient } from "./mind-client.js";
+import { MindApiError, MindClient, type ContextResponse } from "./mind-client.js";
 import {
   SERVER_INSTRUCTIONS,
   INTEGRATION_GUIDE,
@@ -88,6 +88,30 @@ const apiDetail = (e: MindApiError): string => {
     // not JSON — fall through to the raw body/status text
   }
   return e.body || e.statusText;
+};
+
+// mind_context via POST /developer/v1/context: dated, sourced, budgeted, and
+// steerable with for_task. Dark by default (MIND_CONTEXT_V1=1 opts in) until
+// the context engine eval shows it beats the legacy five-query path.
+export const contextV1Enabled = (): boolean =>
+  ["1", "true", "yes", "on"].includes((process.env.MIND_CONTEXT_V1 ?? "").trim().toLowerCase());
+
+export const renderContextV1 = (data: ContextResponse): string => {
+  const blocks = (data.sections ?? []).map((sec) => {
+    let head = `## ${sec.section.toUpperCase()} (${sec.status}`;
+    if (sec.omitted_count) head += `, ${sec.omitted_count} omitted for budget`;
+    const lines = [`${head})`];
+    if (sec.error) lines.push(`error: ${sec.error}`);
+    for (const item of sec.items ?? []) {
+      const meta = [item.date, item.source].filter(Boolean).join(", ");
+      lines.push(`- ${item.text}${meta ? ` [${meta}]` : ""}`);
+    }
+    return lines.join("\n");
+  });
+  blocks.push(
+    `(~${data.estimated_tokens} of ${data.max_tokens} tokens; ${data.total_omitted ?? 0} items omitted)`
+  );
+  return blocks.join("\n\n");
 };
 
 export function createMindMcpServer(client: MindClient): McpServer {
@@ -953,9 +977,30 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .describe(
           "Which context sections to load: soul (identity/personality), user (who the user is), rules (operating constraints), priorities (current goals/tasks), recent (latest activity)"
         ),
+      for_task: z
+        .string()
+        .max(2000)
+        .optional()
+        .describe(
+          "Optional: one or two sentences describing the task you are about to do. Steers retrieval for soul/user/rules/priorities toward what that task needs."
+        ),
+      max_tokens: z
+        .number()
+        .int()
+        .min(200)
+        .max(50000)
+        .optional()
+        .describe(
+          "Optional soft ceiling on the returned context size (rough tokens, default 6000). Lowest-priority items are dropped first and the response says how many."
+        ),
     },
-    async ({ sections }) => {
+    async ({ sections, for_task, max_tokens }) => {
       try {
+        if (contextV1Enabled()) {
+          const data = await client.context({ sections, for_task, max_tokens });
+          return { content: [{ type: "text" as const, text: renderContextV1(data) }] };
+        }
+
         const sectionQueries: Record<string, string> = {
           soul: "my identity, mission, personality, who I am, my role and purpose",
           user: "user profile, preferences, timezone, communication style, who is the user",

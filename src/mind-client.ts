@@ -32,6 +32,33 @@ export interface QueryResponse {
   credits_remaining: number;
 }
 
+export interface ContextRequest {
+  sections?: string[];
+  for_task?: string;
+  max_tokens?: number;
+}
+
+export interface ContextItem {
+  text: string;
+  date?: string | null;
+  source?: string | null;
+}
+
+export interface ContextSection {
+  section: string;
+  status: string;
+  items: ContextItem[];
+  omitted_count?: number;
+  error?: string | null;
+}
+
+export interface ContextResponse {
+  sections: ContextSection[];
+  max_tokens: number;
+  estimated_tokens: number;
+  total_omitted?: number;
+}
+
 export interface DocumentCreateRequest {
   title: string;
   content: string;
@@ -669,6 +696,11 @@ export class MindClient {
 
   async query(req: QueryRequest): Promise<QueryResponse> {
     return this.request<QueryResponse>("POST", "/developer/v1/query", req);
+  }
+
+  // Dated, sourced, budgeted session context (POST /developer/v1/context).
+  async context(req: ContextRequest): Promise<ContextResponse> {
+    return this.request<ContextResponse>("POST", "/developer/v1/context", req);
   }
 
   // Operate Ozzie (the Osiris OSINT analyst) through MIND.
