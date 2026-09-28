@@ -288,10 +288,19 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .optional()
         .default(true)
         .describe("Default true: return raw graph context for YOU to synthesize, 0 credits. Set false to have MIND's own LLM write the answer (spends credits)."),
+      max_context_tokens: z
+        .number()
+        .int()
+        .min(1000)
+        .max(30000)
+        .optional()
+        .describe(
+          "Optional ceiling on retrieved context in tokens (default 30000, about 120K characters). Lower it (e.g. 6000-10000) for a focused payload, and always when retrieve_only=false: MIND's LLM reads the whole context before answering, and a length instruction in the query only bounds the answer, not what is read."
+        ),
     },
-    async ({ query, mode, retrieve_only }) => {
+    async ({ query, mode, retrieve_only, max_context_tokens }) => {
       try {
-        const result = await client.query({ query, mode, retrieve_only });
+        const result = await client.query({ query, mode, retrieve_only, max_context_tokens });
         const text = [
           result.response,
           "",

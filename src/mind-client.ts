@@ -22,6 +22,8 @@ export interface QueryRequest {
    * 0 credits. The MCP surface sends true by default.
    */
   retrieve_only?: boolean;
+  /** Optional ceiling on retrieved context in tokens (1000-30000). */
+  max_context_tokens?: number;
 }
 
 export interface QueryResponse {
