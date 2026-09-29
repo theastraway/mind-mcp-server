@@ -407,8 +407,15 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .number()
         .optional()
         .describe("Max items to return for list/search"),
+      supersedes: z
+        .array(z.string())
+        .max(10)
+        .optional()
+        .describe(
+          "Entries only: earlier records of yours this entry replaces, by id, exact title, or the exact reference title retrieval shows (e.g. \"Journal Entry: <title>\"). They are tagged superseded, never deleted, and stop being retrieved once the server enables it. Use it whenever you record a fix, reversal or newer version, so MIND stops serving the old fact."
+        ),
     },
-    async ({ action, content, type, title, tags, source, item_id, query, page, limit }) => {
+    async ({ action, content, type, title, tags, source, item_id, query, page, limit, supersedes }) => {
       try {
         switch (action) {
           case "create": {
@@ -444,6 +451,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
                   title,
                   content,
                   tags,
+                  ...(supersedes && supersedes.length ? { supersedes } : {}),
                 });
                 storedAs = "entry";
                 break;

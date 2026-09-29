@@ -127,6 +127,8 @@ export interface EntryCreateRequest {
   title?: string;
   content: string;
   tags?: string[];
+  /** Earlier own records this entry replaces (id, exact title, or "Journal Entry: <title>"). */
+  supersedes?: string[];
 }
 
 export interface EntryResponse {
