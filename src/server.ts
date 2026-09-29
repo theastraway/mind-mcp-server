@@ -1017,9 +1017,30 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .describe(
           "Optional soft ceiling on the returned context size (rough tokens, default 6000). Lowest-priority items are dropped first and the response says how many."
         ),
+      action: z
+        .enum(["load", "get_pins", "set_pins"])
+        .optional()
+        .default("load")
+        .describe(
+          "load (default) returns context. get_pins / set_pins read or replace the owner's pinned canonical document ids for soul, user and rules; pinned sections are read directly instead of retrieved, so no look-alike document can take their place."
+        ),
+      pins: z
+        .object({
+          soul: z.array(z.string()).max(5).optional(),
+          user: z.array(z.string()).max(5).optional(),
+          rules: z.array(z.string()).max(5).optional(),
+        })
+        .optional()
+        .describe("For set_pins: document ids per section (max 5). Omit a section to keep it, [] to clear it. Only your own documents are accepted."),
     },
-    async ({ sections, for_task, max_tokens }) => {
+    async ({ sections, for_task, max_tokens, action, pins }) => {
       try {
+        if (action === "get_pins") {
+          return ok(await client.getContextPins());
+        }
+        if (action === "set_pins") {
+          return ok(await client.setContextPins(pins ?? {}));
+        }
         if (contextV1Enabled()) {
           const data = await client.context({ sections, for_task, max_tokens });
           return { content: [{ type: "text" as const, text: renderContextV1(data) }] };

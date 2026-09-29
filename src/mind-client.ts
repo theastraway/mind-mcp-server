@@ -704,6 +704,15 @@ export class MindClient {
     return this.request<QueryResponse>("POST", "/developer/v1/query", req);
   }
 
+  // Owner-pinned canonical documents for context soul/user/rules.
+  async getContextPins(): Promise<unknown> {
+    return this.request<unknown>("GET", "/developer/v1/context/pins");
+  }
+
+  async setContextPins(pins: { soul?: string[]; user?: string[]; rules?: string[] }): Promise<unknown> {
+    return this.request<unknown>("PUT", "/developer/v1/context/pins", pins);
+  }
+
   // Dated, sourced, budgeted session context (POST /developer/v1/context).
   async context(req: ContextRequest): Promise<ContextResponse> {
     return this.request<ContextResponse>("POST", "/developer/v1/context", req);

@@ -75,6 +75,24 @@ test("mind_context advertises optional for_task and max_tokens", async () => {
   await Promise.all([server.connect(st), client.connect(ct)]);
   const { tools } = await client.listTools();
   const props = tools.find((t) => t.name === "mind_context").inputSchema.properties;
-  expect(Object.keys(props).sort()).toEqual(["for_task", "max_tokens", "sections"]);
+  expect(Object.keys(props).sort()).toEqual(["action", "for_task", "max_tokens", "pins", "sections"]);
+  await client.close();
+});
+
+test("get_pins and set_pins call the pins endpoints and skip context loading", async () => {
+  const calls = [];
+  const stub = {
+    async getContextPins() { calls.push(["get"]); return { pins: { user: ["d1"] } }; },
+    async setContextPins(p) { calls.push(["set", p]); return { pins: p, rejected: [] }; },
+    async query() { calls.push(["query"]); return { response: "x" }; },
+  };
+  const server = createMindMcpServer(stub);
+  const client = new Client({ name: "pins-test", version: "0.0.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(st), client.connect(ct)]);
+  const got = await client.callTool({ name: "mind_context", arguments: { action: "get_pins" } });
+  await client.callTool({ name: "mind_context", arguments: { action: "set_pins", pins: { user: ["d1"] } } });
+  expect(calls).toEqual([["get"], ["set", { user: ["d1"] }]]);
+  expect(got.content[0].text).toContain("d1");
   await client.close();
 });
