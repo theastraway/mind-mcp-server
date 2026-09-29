@@ -24,6 +24,8 @@ export interface QueryRequest {
   retrieve_only?: boolean;
   /** Optional ceiling on retrieved context in tokens (1000-30000). */
   max_context_tokens?: number;
+  /** Optional answer instructions for MIND's writer; never used for retrieval. */
+  instructions?: string;
 }
 
 export interface QueryResponse {

@@ -34,3 +34,16 @@ test("max_context_tokens is advertised and forwarded", async () => {
   expect(calls[1].max_context_tokens).toBe(8000);
   await client.close();
 });
+
+test("instructions is advertised and forwarded only when set", async () => {
+  const calls = [];
+  const client = await connect({ async query(req) { calls.push(req); return { response: "ok" }; } });
+  const { tools } = await client.listTools();
+  const props = tools.find((t) => t.name === "mind_query").inputSchema.properties;
+  expect(props.instructions).toMatchObject({ type: "string", maxLength: 4000 });
+  await client.callTool({ name: "mind_query", arguments: { query: "q" } });
+  await client.callTool({ name: "mind_query", arguments: { query: "q", instructions: "Two bullets." } });
+  expect(calls[0].instructions).toBeUndefined();
+  expect(calls[1].instructions).toBe("Two bullets.");
+  await client.close();
+});

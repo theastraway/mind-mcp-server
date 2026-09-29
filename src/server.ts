@@ -297,10 +297,17 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .describe(
           "Optional ceiling on retrieved context in tokens (default 30000, about 120K characters). Lower it (e.g. 6000-10000) for a focused payload, and always when retrieve_only=false: MIND's LLM reads the whole context before answering, and a length instruction in the query only bounds the answer, not what is read."
         ),
+      instructions: z
+        .string()
+        .max(4000)
+        .optional()
+        .describe(
+          "Optional: how MIND's writer should answer (shape, length, audience) when retrieve_only=false. Keep `query` to the question itself and put everything about the answer here: instruction text inside `query` becomes search terms and measurably lowers retrieval quality (relevant documents 62% clean vs 46% wrapped, 2026-09-29). Ignored when retrieve_only=true."
+        ),
     },
-    async ({ query, mode, retrieve_only, max_context_tokens }) => {
+    async ({ query, mode, retrieve_only, max_context_tokens, instructions }) => {
       try {
-        const result = await client.query({ query, mode, retrieve_only, max_context_tokens });
+        const result = await client.query({ query, mode, retrieve_only, max_context_tokens, instructions });
         const text = [
           result.response,
           "",
