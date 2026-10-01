@@ -96,6 +96,17 @@ const apiDetail = (e: MindApiError): string => {
 export const contextV1Enabled = (): boolean =>
   ["1", "true", "yes", "on"].includes((process.env.MIND_CONTEXT_V1 ?? "").trim().toLowerCase());
 
+// Mode for a mind_query call that names none. hybrid reaches text chunks
+// only through extracted entities, so documents still waiting in an
+// extraction backlog are invisible to it; mix adds chunk vectors. Measured
+// 2026-09-29 on 16 claim questions: hybrid 14/16, mix 15/16, similar latency.
+// Dark by default (MIND_QUERY_DEFAULT_MIX=1 opts in), matching the hosted
+// server's MCP_QUERY_DEFAULT_MIX flag.
+export const defaultQueryMode = (): "mix" | "hybrid" =>
+  ["1", "true", "yes", "on"].includes((process.env.MIND_QUERY_DEFAULT_MIX ?? "").trim().toLowerCase())
+    ? "mix"
+    : "hybrid";
+
 export const renderContextV1 = (data: ContextResponse): string => {
   const blocks = (data.sections ?? []).map((sec) => {
     let head = `## ${sec.section.toUpperCase()} (${sec.status}`;
@@ -275,14 +286,14 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_query",
-    "Search the user's MIND knowledge graph — their persistent memory of people, projects, decisions, outcomes and history. Returns RETRIEVED CONTEXT for YOU to read and synthesize — documents, entries, entities and relationships — NOT a finished answer. Does not use MIND's LLM and costs 0 credits. Call this before asserting anything about the user's world, and before saying something does not exist. (Pass retrieve_only=false to have MIND's own LLM write the answer instead, which spends credits.)\n\nHOW TO ASK — this changes answer quality more than any parameter. Ask a rich, specific, full-sentence question; \"what is X\" retrieves poorly. Best results come from retrieve-then-write in one ask: \"Find everything about X, Y and Z, then write <deliverable> in this shape: <template>. Use only what you found; mark anything missing as unknown and do not invent it.\" Name the thing you expect to find — a document title, a person, a project, a date range. If the first answer is thin, change the QUESTION, not the mode — chain a narrower ask.\n\nPICKING A MODE (mechanical): naive reads document text only — best for recalling an exact passage or wording. local walks a named entity and its immediate graph neighbours — best for one specific person, company or thing. global reasons over relationships and themes across the whole graph — best for cross-cutting patterns. hybrid combines local+global graph reasoning but reads no raw document text. mix adds raw document text on top of hybrid and is the most complete; reach for it when hybrid feels thin. hybrid is the default — drop to naive/local/global only when you specifically need that narrower lens.\n\nNEGATIVES ARE THE HIGHEST-RISK ANSWER. An empty or thin result means your query missed — it is never proof the thing does not exist. Before reporting that something is absent, re-ask with different wording and say what you searched.",
+    "Search the user's MIND knowledge graph — their persistent memory of people, projects, decisions, outcomes and history. Returns RETRIEVED CONTEXT for YOU to read and synthesize — documents, entries, entities and relationships — NOT a finished answer. Does not use MIND's LLM and costs 0 credits. Call this before asserting anything about the user's world, and before saying something does not exist. (Pass retrieve_only=false to have MIND's own LLM write the answer instead, which spends credits.)\n\nHOW TO ASK — this changes answer quality more than any parameter. Ask a rich, specific, full-sentence question; \"what is X\" retrieves poorly. Best results come from retrieve-then-write in one ask: \"Find everything about X, Y and Z, then write <deliverable> in this shape: <template>. Use only what you found; mark anything missing as unknown and do not invent it.\" Name the thing you expect to find — a document title, a person, a project, a date range. If the first answer is thin, change the QUESTION, not the mode — chain a narrower ask.\n\nPICKING A MODE (mechanical): naive reads document text only — best for recalling an exact passage or wording. local walks a named entity and its immediate graph neighbours — best for one specific person, company or thing. global reasons over relationships and themes across the whole graph — best for cross-cutting patterns. hybrid combines local+global graph reasoning but reads no raw document text. mix adds raw document text on top of hybrid and is the most complete; reach for it when hybrid feels thin. Omit mode to get the server default; drop to naive/local/global only when you specifically need that narrower lens.\n\nNEGATIVES ARE THE HIGHEST-RISK ANSWER. An empty or thin result means your query missed — it is never proof the thing does not exist. Before reporting that something is absent, re-ask with different wording and say what you searched.",
     {
       query: z.string().describe("What to search for in your knowledge graph"),
       mode: z
         .enum(["mix", "hybrid", "global", "local", "naive"])
         .optional()
-        .default("hybrid")
-        .describe("Search mode: hybrid (default, best results — combines semantic + graph traversal), mix (balanced), global (broad graph search), local (focused graph search), naive (simple vector search)"),
+        .optional()
+        .describe("Search mode. Omit it to use the server default (hybrid, or mix where the server enables it). mix: graph plus raw document text, the most complete, and it also finds documents still waiting for graph extraction. hybrid: combines local and global graph reasoning. global: broad graph search. local: focused graph search. naive: simple vector search over document text."),
       retrieve_only: z
         .boolean()
         .optional()
@@ -307,7 +318,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
     },
     async ({ query, mode, retrieve_only, max_context_tokens, instructions }) => {
       try {
-        const result = await client.query({ query, mode, retrieve_only, max_context_tokens, instructions });
+        const result = await client.query({ query, mode: mode ?? defaultQueryMode(), retrieve_only, max_context_tokens, instructions });
         const text = [
           result.response,
           "",
