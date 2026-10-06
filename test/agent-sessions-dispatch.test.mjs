@@ -37,6 +37,8 @@ const AGENT_SESSION_METHODS = [
   "createAgentSessionSource",
   "updateAgentSessionSource",
   "deleteAgentSessionSource",
+  "getAgentActivity",
+  "setAgentSessionProject",
 ];
 
 /** Mock MindClient: records every agent-session call; can throw or return canned values. */
@@ -109,6 +111,20 @@ test("append dispatches to appendAgentSession with session_id, messages, title",
   expect(result.isError, textOf(result)).toBeFalsy();
   expect(mock.__calls[0].method).toBe("appendAgentSession");
   expect(mock.__calls[0].args).toEqual(["s1", messages, "New title"]);
+  await client.close();
+});
+
+test("append forwards device, platform and env hints", async () => {
+  const mock = makeMockClient();
+  const client = await connect(mock);
+  const messages = [{ role: "user", content: "hi" }];
+  const device = { kind: "droplet", label: "dae-1" };
+  const result = await callSessions(client, {
+    action: "append", session_id: "s1", messages, device, platform: "linux", env: { DROPLET_ID: "1" },
+  });
+  expect(result.isError, textOf(result)).toBeFalsy();
+  expect(mock.__calls[0].method).toBe("appendAgentSession");
+  expect(mock.__calls[0].args[3]).toEqual({ device, platform: "linux", env: { DROPLET_ID: "1" } });
   await client.close();
 });
 
@@ -337,4 +353,47 @@ test("SERVER_INSTRUCTIONS carries the AGENT SESSION PROTOCOL block and mind_sess
   expect(SERVER_INSTRUCTIONS).toContain("AGENT SESSION PROTOCOL");
   expect(SERVER_INSTRUCTIONS).toContain("mind_sessions");
   expect(SERVER_INSTRUCTIONS).toMatch(/TOOL MAP — 45 tools/);
+});
+
+
+test("open forwards a declared project_id", async () => {
+  const mock = makeMockClient();
+  const client = await connect(mock);
+  const result = await callSessions(client, {
+    action: "open",
+    source_key: "claude-code-1",
+    external_session_id: "sess-p",
+    project_id: "life-123",
+  });
+  expect(result.isError, textOf(result)).toBeFalsy();
+  expect(mock.__calls[0].args[0]).toMatchObject({ project_id: "life-123" });
+  await client.close();
+});
+
+test("activity dispatches to getAgentActivity with days", async () => {
+  const mock = makeMockClient();
+  const client = await connect(mock);
+  const result = await callSessions(client, { action: "activity", days: 30 });
+  expect(result.isError, textOf(result)).toBeFalsy();
+  expect(mock.__calls).toEqual([{ method: "getAgentActivity", args: [30] }]);
+  await client.close();
+});
+
+test("set_project dispatches with project_id, clears with null, and requires session_id", async () => {
+  const mock = makeMockClient();
+  const client = await connect(mock);
+  let result = await callSessions(client, { action: "set_project", session_id: "s1", project_id: "life-9", learn: false });
+  expect(result.isError, textOf(result)).toBeFalsy();
+  result = await callSessions(client, { action: "set_project", session_id: "s1" });
+  expect(result.isError, textOf(result)).toBeFalsy();
+  expect(mock.__calls).toEqual([
+    { method: "setAgentSessionProject", args: ["s1", "life-9", false] },
+    { method: "setAgentSessionProject", args: ["s1", null, undefined] },
+  ]);
+
+  const missing = await callSessions(client, { action: "set_project", project_id: "life-9" });
+  expect(missing.isError).toBe(true);
+  expect(textOf(missing)).toContain("session_id");
+  expect(mock.__calls).toHaveLength(2);
+  await client.close();
 });

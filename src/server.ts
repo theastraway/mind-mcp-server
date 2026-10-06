@@ -3489,14 +3489,14 @@ export function createMindMcpServer(client: MindClient): McpServer {
     "mind_sessions",
     "Log THIS agent's own live session into MIND Chat → Agents, so Anthony can read the transcript and reply — his reply reaches you on your next turn. Distinct from mind_remember (one durable fact) and mind_train (teaching the KG): this is the live, turn-by-turn session log, mirrored into a MIND document when you close it.\n\n" +
       "PROTOCOL (do this every session): " +
-      "1) CONNECT — as soon as mind_context succeeds, call action=open with source_key (your assigned MIND Chat toggle, e.g. \"claude-code-1\"), external_session_id (your runtime's own session id), runtime, title (first user ask, 6-10 words), machine/cwd/repo/branch/model. Your real source is derived from runtime x installation (device/platform/env), never the literal source_key — the response's own `source_key` tells you what it actually resolved to. If you're a named agent within a shared runtime (a scheduled job, a persona, a bot on a shared account), pass `agent` (a bare name, or {key,label}) so sessions attribute to WHO ran them, not just where — this works for every runtime, not only shared/cloud ones. If `resumed` is true, read `tail` before answering, and answer everything in `pending_replies` first — those arrived while you were away. " +
+      "1) CONNECT — as soon as mind_context succeeds, call action=open with source_key (your assigned MIND Chat toggle, e.g. \"claude-code-1\"), external_session_id (your runtime's own session id), runtime, title (first user ask, 6-10 words), machine/cwd/repo/branch/model. Your real source is derived from runtime x installation (device/platform/env), never the literal source_key — the response's own `source_key` tells you what it actually resolved to. If you're a named agent within a shared runtime (a scheduled job, a persona, a bot on a shared account), pass `agent` (a bare name, or {key,label}) so sessions attribute to WHO ran them, not just where — this works for every runtime, not only shared/cloud ones. If you know which Life project the work is for, pass its item id as `project_id` so the Agent Activity Map files the session there (otherwise MIND infers it). If `resumed` is true, read `tail` before answering, and answer everything in `pending_replies` first — those arrived while you were away. " +
       "2) EVERY TURN — after you finish replying, call action=append with the user's message and your final reply (role user / assistant); tool calls go in as role=tool one-line summaries, never raw payloads. Check `pending_replies` on the response and answer them next turn. action=reply is a shortcut for appending a single assistant-role message when you have no user message to log alongside it. " +
       "3) IDLE — MIND marks the session idle after 30 minutes with no append; the next append revives it, nothing to do meanwhile. " +
       "4) TERMINATE — on exit, compaction, or \"done\", call action=close with a summary (what was asked, what shipped with ids/PR numbers, what is still undone); MIND mirrors the transcript into your Sessions folder as a document. " +
       "5) HANDOFF — to pass the conversation to another agent, call action=handoff with to_source_key=<their toggle>; they see it in their session list with the transcript as context. " +
       "6) SHARE — to let another MIND user follow this session, call action=share with grantee_username and role (\"viewer\" read-only, the default, or \"replier\" which also lets them reply — a reply is a live action that wakes your process via wake_url, so grant it deliberately). It's a live mirror, never a copy: they always see the current transcript, and revoking (action=revoke_share) removes their access immediately. Never share a session with anyone who shouldn't see its full transcript.\n" +
       "Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads.\n\n" +
-      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only).",
+      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project).",
     {
       action: z
         .enum([
@@ -3512,6 +3512,8 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "share",
           "list_shares",
           "revoke_share",
+          "activity",
+          "set_project",
         ])
         .describe("Which agent-session operation to perform."),
       // open
@@ -3540,8 +3542,11 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .union([z.string(), z.object({ key: z.string(), label: z.string().optional() })])
         .optional()
         .describe("Who is actually running this session — an attribute OF the session, never a source key, and unconditional on runtime (a claude-code cron run can carry agent=\"Chief of Staff\" exactly like a grok run carries agent=\"Dae\"). Bare string used as both key and label, or {key, label}. Falls back to a legacy alias for a bot-shaped source_key (\"dae\"→Dae, \"meter\"→Meter, \"grok-bot\"→Helm, \"n8n\"→n8n), then to the runtime's own display name — open only."),
+      project_id: z.string().optional().describe("Life project item id this session works on — open (declared) and set_project (omit to clear)."),
+      days: z.number().positive().max(90).optional().describe("Lookback window in days for activity (default 7, max 90)."),
+      learn: z.boolean().optional().describe("set_project: remember this session's working folder or repo for future sessions (default true)."),
       // append / reply
-      session_id: z.string().optional().describe("Session id returned by open — required for append/close/get/inbox/handoff."),
+      session_id: z.string().optional().describe("Session id returned by open — required for append/close/get/inbox/handoff/set_project."),
       messages: z
         .array(
           z.object({
@@ -3603,15 +3608,30 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 platform: args.platform,
                 env: args.env,
                 agent: args.agent,
+                project_id: args.project_id,
               })
             );
+          }
+
+          case "activity":
+            return ok(await client.getAgentActivity(args.days));
+
+          case "set_project": {
+            const { session_id } = args;
+            if (!session_id) return err("Error: 'session_id' is required for set_project.");
+            return ok(await client.setAgentSessionProject(session_id, args.project_id ?? null, args.learn));
           }
 
           case "append": {
             const { session_id, messages } = args;
             if (!session_id) return err("Error: 'session_id' is required for append.");
             if (!messages?.length) return err("Error: 'messages' (at least one) is required for append.");
-            return ok(await client.appendAgentSession(session_id, messages, args.title));
+            const { device, platform, env } = args;
+            return ok(
+              device || platform || env
+                ? await client.appendAgentSession(session_id, messages, args.title, { device, platform, env })
+                : await client.appendAgentSession(session_id, messages, args.title)
+            );
           }
 
           case "reply": {

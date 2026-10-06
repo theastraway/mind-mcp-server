@@ -2591,10 +2591,14 @@ export class MindClient {
   async appendAgentSession(
     sessionId: string,
     messages: AgentSessionMessageInput[],
-    title?: string
+    title?: string,
+    hints?: Pick<OpenAgentSessionRequest, "device" | "platform" | "env">
   ): Promise<AppendAgentSessionResponse> {
     const body: Record<string, unknown> = { messages };
     if (title !== undefined) body.title = title;
+    if (hints?.device !== undefined) body.device = hints.device;
+    if (hints?.platform !== undefined) body.platform = hints.platform;
+    if (hints?.env !== undefined) body.env = hints.env;
     return this.request(
       "POST",
       `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/append`,
@@ -2741,6 +2745,28 @@ export class MindClient {
     await this.request(
       "DELETE",
       `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/shares/${encodeURIComponent(shareId)}`
+    );
+  }
+
+  /** Agent Activity Map: agents x Life projects, effort and replies in the window. */
+  async getAgentActivity(days?: number): Promise<Record<string, unknown>> {
+    const qp: Record<string, string> = {};
+    if (days !== undefined) qp.days = String(days);
+    return this.request("GET", "/developer/v1/agent-sessions/activity", undefined, qp);
+  }
+
+  /** Assign (or clear, with null) the Life project a session works on. */
+  async setAgentSessionProject(
+    sessionId: string,
+    projectId: string | null,
+    learn?: boolean
+  ): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { project_id: projectId };
+    if (learn !== undefined) body.learn = learn;
+    return this.request(
+      "POST",
+      `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}/project`,
+      body
     );
   }
 }
@@ -3260,6 +3286,8 @@ export interface OpenAgentSessionRequest {
   platform?: string;
   env?: Record<string, unknown>;
   agent?: AgentSessionAgentHint;
+  /** Life project this session works on (Agent Activity Map). */
+  project_id?: string;
 }
 
 export interface OpenAgentSessionResponse {
