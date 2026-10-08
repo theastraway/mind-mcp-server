@@ -79,7 +79,8 @@ MIND is the system of record for your sessions. Anthony reads and replies to the
 4. IDLE: MIND marks you idle after 30 minutes without an append. Nothing to do; the next append revives the session.
 5. TERMINATE: on exit, compaction, or "done", call mind_sessions action=close with a summary (what was asked, what shipped with ids and PR numbers, what is still undone). MIND mirrors the session into your Sessions folder as a document.
 6. HANDOFF: to pass work to another agent, mind_sessions action=handoff to_source_key=<their toggle>; they will find it in their list with the transcript as context.
-7. Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads into a session.`;
+7. Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads into a session.
+8. RESUME ANYWHERE: when the user says "run my <Agent> session" / "be <Agent>", call mind_sessions action=resume agent=<Agent> and follow its resume_prompt. Keep your agent file current with action=agent_doc_update (editor agent, with a note) when your role, rules or standing work change.`;
 
 /**
  * Builds the sync-agent-session prompt text: a one-line intro naming the

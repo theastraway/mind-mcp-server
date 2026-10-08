@@ -253,6 +253,60 @@ export function createMindMcpServer(client: MindClient): McpServer {
     }),
   );
 
+  // ─── resume-agent-session prompt ──────────────────────────
+  // "Any AI that you tell to 'run my Meter session' taps into the Meter
+  // MIND session and picks up where it left off with the right prompting"
+  // (contract, 2026-10-06). Unlike sync-agent-session above (a static
+  // template), this one makes the LIVE mind_sessions action=resume call
+  // itself and hands back its resume_prompt verbatim — the model adopts it
+  // as-is rather than being taught the protocol from scratch.
+  server.registerPrompt(
+    "resume-agent-session",
+    {
+      title: "Resume an agent's session",
+      description:
+        "Resolves <agent>'s most recent session, agent file, and attached context, opens a continuation session, and returns a ready-to-adopt resume_prompt. Equivalent to calling mind_sessions action=resume yourself.",
+      argsSchema: {
+        agent: z.string().describe('The agent to resume, e.g. "Meter". Required.'),
+      },
+    },
+    async ({ agent }) => {
+      const trimmed = (agent ?? "").trim();
+      if (!trimmed) {
+        return {
+          messages: [
+            {
+              role: "user" as const,
+              content: { type: "text" as const, text: "Error: 'agent' is required to resume a session." },
+            },
+          ],
+        };
+      }
+      try {
+        const result = await client.resumeAgent({ agent: trimmed });
+        return {
+          messages: [
+            {
+              role: "user" as const,
+              content: {
+                type: "text" as const,
+                text: `${result.resume_prompt}\n\n(session_id: ${result.session_id} — append every turn with mind_sessions action=append using this session_id)`,
+              },
+            },
+          ],
+        };
+      } catch (e) {
+        const message =
+          e instanceof MindApiError
+            ? `Resume failed (HTTP ${e.status}): ${apiDetail(e)}`
+            : `Resume error: ${e instanceof Error ? e.message : String(e)}`;
+        return {
+          messages: [{ role: "user" as const, content: { type: "text" as const, text: message } }],
+        };
+      }
+    },
+  );
+
   // ─── adopt-agent-standard prompt ─────────────────────────
   // Same content as the mind://agent-standard resource (AGENT_STANDARD_MD —
   // see integration-guide.ts for provenance and the refresh recipe), offered
@@ -3494,9 +3548,11 @@ export function createMindMcpServer(client: MindClient): McpServer {
       "3) IDLE — MIND marks the session idle after 30 minutes with no append; the next append revives it, nothing to do meanwhile. " +
       "4) TERMINATE — on exit, compaction, or \"done\", call action=close with a summary (what was asked, what shipped with ids/PR numbers, what is still undone); MIND mirrors the transcript into your Sessions folder as a document. " +
       "5) HANDOFF — to pass the conversation to another agent, call action=handoff with to_source_key=<their toggle>; they see it in their session list with the transcript as context. " +
-      "6) SHARE — to let another MIND user follow this session, call action=share with grantee_username and role (\"viewer\" read-only, the default, or \"replier\" which also lets them reply — a reply is a live action that wakes your process via wake_url, so grant it deliberately). It's a live mirror, never a copy: they always see the current transcript, and revoking (action=revoke_share) removes their access immediately. Never share a session with anyone who shouldn't see its full transcript.\n" +
+      "6) SHARE — to let another MIND user follow this session, call action=share with grantee_username and role (\"viewer\" read-only, the default, or \"replier\" which also lets them reply — a reply is a live action that wakes your process via wake_url, so grant it deliberately). It's a live mirror, never a copy: they always see the current transcript, and revoking (action=revoke_share) removes their access immediately. Never share a session with anyone who shouldn't see its full transcript. " +
+      "7) AGENT FILE — if you are a named, standing agent (not a bare runtime), keep your agent file current with action=agent_doc_update (editor=\"agent\", with a `note`) whenever your role, rules or standing work change; read it anytime with action=agent_doc_get. " +
+      "8) RESUME ANYWHERE — when the user says \"run my <Agent> session\" / \"be <Agent>\" / \"resume <Agent>\", call action=resume with agent=<Agent> and adopt its `resume_prompt` verbatim as your operating brief for the rest of the turn — it already carries your agent file, attached context, where you left off, and any pending replies.\n" +
       "Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads.\n\n" +
-      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project).",
+      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project), agent_doc_get (read a standing agent's file — its role/rules/tools/standing-work doc, identified by `agent_key`; returns a starter template when none exists yet), agent_doc_update (save a new version of that file; `editor` is \"user\" or \"agent\" — \"agent\" requires a `note` saying what changed and why; a stale `base_version` 409s with the current doc instead of clobbering a concurrent edit), attach (replace the full list of Life projects/focuses/workspaces/repos an agent is connected to, by `agent_key` and `attachments`), resume (pick up a named agent — `agent` — wherever it last left off: its agent file, attached context with live summaries, the previous session's tail/summary, any pending replies, and a ready-to-adopt `resume_prompt`; also opens a fresh continuation session for you to keep working in).",
     {
       action: z
         .enum([
@@ -3514,6 +3570,10 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "revoke_share",
           "activity",
           "set_project",
+          "agent_doc_get",
+          "agent_doc_update",
+          "attach",
+          "resume",
         ])
         .describe("Which agent-session operation to perform."),
       // open
@@ -3541,7 +3601,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
       agent: z
         .union([z.string(), z.object({ key: z.string(), label: z.string().optional() })])
         .optional()
-        .describe("Who is actually running this session — an attribute OF the session, never a source key, and unconditional on runtime (a claude-code cron run can carry agent=\"Chief of Staff\" exactly like a grok run carries agent=\"Dae\"). Bare string used as both key and label, or {key, label}. Falls back to a legacy alias for a bot-shaped source_key (\"dae\"→Dae, \"meter\"→Meter, \"grok-bot\"→Helm, \"n8n\"→n8n), then to the runtime's own display name — open only."),
+        .describe("Who is actually running this session — an attribute OF the session, never a source key, and unconditional on runtime (a claude-code cron run can carry agent=\"Chief of Staff\" exactly like a grok run carries agent=\"Dae\"). Bare string used as both key and label, or {key, label}. Falls back to a legacy alias for a bot-shaped source_key (\"dae\"→Dae, \"meter\"→Meter, \"grok-bot\"→Helm, \"n8n\"→n8n), then to the runtime's own display name — open only. For resume, a plain string naming the agent to pick up, e.g. \"Meter\" — required."),
       project_id: z.string().optional().describe("Life project item id this session works on — open (declared) and set_project (omit to clear)."),
       days: z.number().positive().max(90).optional().describe("Lookback window in days for activity (default 7, max 90)."),
       learn: z.boolean().optional().describe("set_project: remember this session's working folder or repo for future sessions (default true)."),
@@ -3559,7 +3619,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
         )
         .optional()
         .describe("Messages to append, in order — required for append. Tool-call messages should be role=tool, one-line summaries only, never raw payloads."),
-      content: z.string().optional().describe("Message text — required for reply (appended as a single role=assistant message)."),
+      content: z.string().optional().describe("Message text — required for reply (appended as a single role=assistant message). Also used for agent_doc_update: the agent file's full markdown content — required there too."),
       // close
       summary: z.string().optional().describe("What was asked, what shipped (with ids/PR numbers), what is still undone — close. If omitted, MIND builds one from the transcript."),
       // list / close (status set) share this field
@@ -3582,6 +3642,21 @@ export function createMindMcpServer(client: MindClient): McpServer {
       grantee_username: z.string().optional().describe("MIND username to share with — required for share."),
       role: z.enum(["viewer", "replier"]).optional().describe("Role to grant — share (default \"viewer\"). \"replier\" additionally allows the grantee to reply, which reaches you via wake_url."),
       share_id: z.string().optional().describe("Share grant id (from share or list_shares) — required for revoke_share."),
+      // agent_doc_get / agent_doc_update / attach
+      agent_key: z.string().optional().describe("The agent's persona key, e.g. \"meter\" or \"Meter\" (any casing — the server normalizes it) — required for agent_doc_get, agent_doc_update, attach."),
+      editor: z.enum(["user", "agent"]).optional().describe("Who is saving this version — required for agent_doc_update. \"agent\" requires `note`."),
+      note: z.string().optional().describe("What changed and why — required for agent_doc_update when editor=\"agent\"."),
+      base_version: z.number().int().optional().describe("The version you last read, for agent_doc_update — a stale value 409s with the current doc instead of silently overwriting a concurrent edit."),
+      attachments: z
+        .array(
+          z.object({
+            kind: z.enum(["project", "focus", "workspace", "repo"]),
+            id: z.string(),
+            label: z.string().optional(),
+          })
+        )
+        .optional()
+        .describe("The FULL replacement list of what this agent is connected to — required for attach. kind=\"project\"/\"focus\" ids are Life item ids, \"workspace\" is a workspace id, \"repo\" is \"owner/name\"."),
     },
     async (args) => {
       const { action } = args;
@@ -3762,6 +3837,50 @@ export function createMindMcpServer(client: MindClient): McpServer {
             if (!share_id) return err("Error: 'share_id' is required for revoke_share.");
             await client.revokeAgentSessionShare(session_id, share_id);
             return ok({ ok: true, session_id, share_id });
+          }
+
+          case "agent_doc_get": {
+            const { agent_key } = args;
+            if (!agent_key) return err("Error: 'agent_key' is required for agent_doc_get.");
+            return ok(await client.getAgentDoc(agent_key));
+          }
+
+          case "agent_doc_update": {
+            const { agent_key, content, editor } = args;
+            if (!agent_key) return err("Error: 'agent_key' is required for agent_doc_update.");
+            if (content === undefined) return err("Error: 'content' is required for agent_doc_update.");
+            if (!editor) return err("Error: 'editor' is required for agent_doc_update.");
+            return ok(
+              await client.updateAgentDoc(agent_key, {
+                content,
+                editor,
+                note: args.note,
+                base_version: args.base_version,
+              })
+            );
+          }
+
+          case "attach": {
+            const { agent_key, attachments } = args;
+            if (!agent_key) return err("Error: 'agent_key' is required for attach.");
+            if (!attachments) return err("Error: 'attachments' is required for attach.");
+            return ok(await client.setAgentAttachments(agent_key, attachments));
+          }
+
+          case "resume": {
+            const { agent } = args;
+            if (!agent || typeof agent !== "string") {
+              return err("Error: 'agent' (a plain string naming the agent) is required for resume.");
+            }
+            return ok(
+              await client.resumeAgent({
+                agent,
+                runtime: args.runtime,
+                source_key: args.source_key,
+                external_session_id: args.external_session_id,
+                title: args.title,
+              })
+            );
           }
 
           default: {

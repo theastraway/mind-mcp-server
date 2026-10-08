@@ -2769,6 +2769,83 @@ export class MindClient {
       body
     );
   }
+
+  // ─── Agent docs, attachments & resume ──────────────────────
+  // "Agents with their own files, attached context, and resume-anywhere"
+  // (contract, 2026-10-08). Backed by backend/services/agent_docs.py via
+  // the same /developer/v1/agent-sessions router. agent_key is a
+  // normalized persona slug — any casing works, the server normalizes it
+  // (see services/agent_docs.py normalize_agent_key).
+
+  async getAgentDoc(agentKey: string): Promise<AgentDocResponse> {
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/agents/${encodeURIComponent(agentKey)}/doc`
+    );
+  }
+
+  async updateAgentDoc(
+    agentKey: string,
+    req: { content: string; editor: "user" | "agent"; note?: string; base_version?: number }
+  ): Promise<AgentDocResponse> {
+    return this.request(
+      "PUT",
+      `/developer/v1/agent-sessions/agents/${encodeURIComponent(agentKey)}/doc`,
+      req
+    );
+  }
+
+  async getAgentDocHistory(agentKey: string): Promise<AgentDocHistoryEntry[]> {
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/agents/${encodeURIComponent(agentKey)}/doc/history`
+    );
+  }
+
+  async getAgentDocHistoryVersion(
+    agentKey: string,
+    version: number
+  ): Promise<AgentDocHistoryEntry & { content: string }> {
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/agents/${encodeURIComponent(agentKey)}/doc/history/${version}`
+    );
+  }
+
+  async getAgentAttachments(agentKey: string): Promise<{ attachments: AgentAttachment[] }> {
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/agents/${encodeURIComponent(agentKey)}/attachments`
+    );
+  }
+
+  /** Full replacement of the attachment list — not a merge/patch. */
+  async setAgentAttachments(
+    agentKey: string,
+    attachments: AgentAttachment[]
+  ): Promise<{ attachments: AgentAttachment[] }> {
+    return this.request(
+      "PUT",
+      `/developer/v1/agent-sessions/agents/${encodeURIComponent(agentKey)}/attachments`,
+      { attachments }
+    );
+  }
+
+  async searchAttachable(
+    kind: "project" | "focus" | "workspace",
+    q?: string
+  ): Promise<AttachableResult[]> {
+    const qp: Record<string, string> = { kind };
+    if (q) qp.q = q;
+    return this.request("GET", "/developer/v1/agent-sessions/attachable", undefined, qp);
+  }
+
+  /** Resolves `agent`'s most recent session, agent doc and attached
+   * context, opens a continuation session, and returns a ready-to-adopt
+   * `resume_prompt`. */
+  async resumeAgent(req: ResumeAgentRequest): Promise<ResumeAgentResponse> {
+    return this.request("POST", "/developer/v1/agent-sessions/resume", req);
+  }
 }
 
 // ─── Task types ───────────────────────────────────────────
@@ -3330,6 +3407,82 @@ export interface GetAgentSessionResponse extends AgentSessionRecord {
 
 export interface AgentSessionInboxResponse {
   pending_replies: AgentSessionMessage[];
+}
+
+// ─── Agent docs, attachments & resume types ─────────────────
+// "Agents with their own files, attached context, and resume-anywhere"
+// (contract, 2026-10-08). Backed by backend/services/agent_docs.py.
+
+export interface AgentDocResponse {
+  agent_key: string;
+  label: string;
+  content: string;
+  version: number;
+  updated_at?: string | null;
+  updated_by?: "user" | "agent" | null;
+  updated_via?: string | null;
+  /** False when no doc has ever been saved — `content` is then a starter
+   * template (seeded from the agent's registry card when one matches). */
+  exists: boolean;
+}
+
+export interface AgentDocHistoryEntry {
+  agent_key: string;
+  version: number;
+  updated_at: string;
+  updated_by: "user" | "agent";
+  note?: string | null;
+  size: number;
+}
+
+export type AgentAttachmentKind = "project" | "focus" | "workspace" | "repo";
+
+export interface AgentAttachment {
+  kind: AgentAttachmentKind;
+  id: string;
+  label?: string | null;
+}
+
+export interface AgentAttachmentSummary extends AgentAttachment {
+  /** 1-3 line summary — project status/next tasks, focus description, or
+   * repo default branch. Only present on a resume response. */
+  summary: string;
+}
+
+export interface AttachableResult {
+  kind: "project" | "focus" | "workspace";
+  id: string;
+  label: string;
+  sub?: string | null;
+}
+
+export interface ResumeAgentRequest {
+  agent: string;
+  runtime?: AgentSessionRuntime;
+  source_key?: string;
+  external_session_id?: string;
+  title?: string;
+}
+
+export interface ResumeAgentPreviousSession {
+  session_id: string;
+  title?: string | null;
+  last_activity_at?: string | null;
+  summary?: string | null;
+  tail?: AgentSessionMessage[] | null;
+}
+
+export interface ResumeAgentResponse {
+  session_id: string;
+  agent_key: string;
+  agent_doc: { content: string; version: number };
+  attachments: AgentAttachmentSummary[];
+  previous_session: ResumeAgentPreviousSession | null;
+  pending_replies: AgentSessionMessage[];
+  /** Ready-to-paste system-style briefing: who you are, what you're
+   * attached to, where the last session left off, open replies, and the
+   * standing protocol. */
+  resume_prompt: string;
 }
 
 // ─── Agent Session sharing types ────────────────────────────
