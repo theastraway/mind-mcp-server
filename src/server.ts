@@ -3552,7 +3552,9 @@ export function createMindMcpServer(client: MindClient): McpServer {
       "7) AGENT FILE — if you are a named, standing agent (not a bare runtime), keep your agent file current with action=agent_doc_update (editor=\"agent\", with a `note`) whenever your role, rules or standing work change; read it anytime with action=agent_doc_get. " +
       "8) RESUME ANYWHERE — when the user says \"run my <Agent> session\" / \"be <Agent>\" / \"resume <Agent>\", call action=resume with agent=<Agent> and adopt its `resume_prompt` verbatim as your operating brief for the rest of the turn — it already carries your agent file, attached context, where you left off, and any pending replies.\n" +
       "Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads.\n\n" +
-      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project), agent_doc_get (read a standing agent's file — its role/rules/tools/standing-work doc, identified by `agent_key`; returns a starter template when none exists yet), agent_doc_update (save a new version of that file; `editor` is \"user\" or \"agent\" — \"agent\" requires a `note` saying what changed and why; a stale `base_version` 409s with the current doc instead of clobbering a concurrent edit), attach (replace the full list of Life projects/focuses/workspaces/repos an agent is connected to, by `agent_key` and `attachments`), resume (pick up a named agent — `agent` — wherever it last left off: its agent file, attached context with live summaries, the previous session's tail/summary, any pending replies, and a ready-to-adopt `resume_prompt`; also opens a fresh continuation session for you to keep working in).",
+      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project), agent_doc_get (read a standing agent's file — its role/rules/tools/standing-work doc, identified by `agent_key`; returns a starter template when none exists yet), agent_doc_update (save a new version of that file; `editor` is \"user\" or \"agent\" — \"agent\" requires a `note` saying what changed and why; a stale `base_version` 409s with the current doc instead of clobbering a concurrent edit), attach (replace the full list of Life projects/focuses/workspaces/repos an agent is connected to, by `agent_key` and `attachments`), mentions (read/mark-delivered this key's pending @mentions), group_create, group_list, group_get, group_post, group_inbox, group_delete (see GROUP CHATS / @ MENTIONS below), resume (pick up a named agent — `agent` — wherever it last left off: its agent file, attached context with live summaries, the previous session's tail/summary, any pending replies, and a ready-to-adopt `resume_prompt`; also opens a fresh continuation session for you to keep working in).\n\n" +
+      "GROUP CHATS — group_create (title, participant_keys: 2-20 source keys) opens a group thread; group_post (group_id, author_key, content) appends a message and delivers it into every OTHER participant's durable @mention inbox (see action=mentions) — group membership is an implicit mention of everyone else in the room; group_get (group_id) reads the full thread; group_list lists your groups; group_inbox (group_id, as_key) is a group-scoped view of the same inbox action=mentions reads; group_delete removes a group and its thread. " +
+      "@ MENTIONS — writing \"@<source_key>\" inside ANY posted content (a 1:1 session's append/reply, or a group_post) durably queues a pending mention for that key, independent of whether it has an open session right now or lives in a different chat/group entirely. action=mentions (as_key) returns and marks delivered every pending mention of that key — poll it the same way you poll action=inbox.",
     {
       action: z
         .enum([
@@ -3574,6 +3576,13 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "agent_doc_update",
           "attach",
           "resume",
+          "mentions",
+          "group_create",
+          "group_list",
+          "group_get",
+          "group_post",
+          "group_inbox",
+          "group_delete",
         ])
         .describe("Which agent-session operation to perform."),
       // open
@@ -3657,6 +3666,11 @@ export function createMindMcpServer(client: MindClient): McpServer {
         )
         .optional()
         .describe("The FULL replacement list of what this agent is connected to — required for attach. kind=\"project\"/\"focus\" ids are Life item ids, \"workspace\" is a workspace id, \"repo\" is \"owner/name\"."),
+      // groups / mentions
+      as_key: z.string().optional().describe("Which agent key is asking — required for mentions / group_inbox: whose durable @mention inbox to read (and mark delivered)."),
+      group_id: z.string().optional().describe("A group's id, returned by group_create — required for group_get/group_post/group_inbox/group_delete."),
+      participant_keys: z.array(z.string()).optional().describe("Source keys (2-20) of every agent in the group — required for group_create."),
+      author_key: z.string().optional().describe("Which participant is posting — required for group_post. Must be one of the group's participant_keys."),
     },
     async (args) => {
       const { action } = args;
@@ -3881,6 +3895,51 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 title: args.title,
               })
             );
+          }
+
+          case "mentions": {
+            const as_key = args.as_key;
+            if (!as_key) return err("Error: 'as_key' is required for mentions.");
+            return ok(await client.getAgentMentions(as_key));
+          }
+
+          case "group_create": {
+            const { participant_keys } = args;
+            if (!participant_keys || participant_keys.length === 0) {
+              return err("Error: 'participant_keys' (at least 2) is required for group_create.");
+            }
+            return ok(await client.createAgentSessionGroup(args.title ?? "New group", participant_keys));
+          }
+
+          case "group_list":
+            return ok(await client.listAgentSessionGroups());
+
+          case "group_get": {
+            const { group_id } = args;
+            if (!group_id) return err("Error: 'group_id' is required for group_get.");
+            return ok(await client.getAgentSessionGroup(group_id, args.limit));
+          }
+
+          case "group_post": {
+            const { group_id, author_key, content } = args;
+            if (!group_id) return err("Error: 'group_id' is required for group_post.");
+            if (!author_key) return err("Error: 'author_key' is required for group_post.");
+            if (!content) return err("Error: 'content' is required for group_post.");
+            return ok(await client.postAgentSessionGroupMessage(group_id, author_key, content));
+          }
+
+          case "group_inbox": {
+            const { group_id, as_key } = args;
+            if (!group_id) return err("Error: 'group_id' is required for group_inbox.");
+            if (!as_key) return err("Error: 'as_key' is required for group_inbox.");
+            return ok(await client.getAgentSessionGroupInbox(group_id, as_key));
+          }
+
+          case "group_delete": {
+            const { group_id } = args;
+            if (!group_id) return err("Error: 'group_id' is required for group_delete.");
+            await client.deleteAgentSessionGroup(group_id);
+            return ok({ ok: true });
           }
 
           default: {

@@ -2846,6 +2846,69 @@ export class MindClient {
   async resumeAgent(req: ResumeAgentRequest): Promise<ResumeAgentResponse> {
     return this.request("POST", "/developer/v1/agent-sessions/resume", req);
   }
+
+  // ─── Groups (N agents in one conversation) + @ mentions ────
+  // Backed by services/agent_groups.py via the same agent-sessions router.
+  // Group membership is an implicit mention of every other participant on
+  // every post; getAgentMentions / getAgentSessionGroupInbox share one
+  // underlying delivery mechanism (agent_mentions, delivered-once).
+
+  async createAgentSessionGroup(
+    title: string,
+    participantKeys: string[]
+  ): Promise<Record<string, unknown>> {
+    return this.request("POST", "/developer/v1/agent-sessions/groups", {
+      title,
+      participant_keys: participantKeys,
+    });
+  }
+
+  async listAgentSessionGroups(): Promise<Record<string, unknown>> {
+    return this.request("GET", "/developer/v1/agent-sessions/groups");
+  }
+
+  async getAgentSessionGroup(groupId: string, limit?: number): Promise<Record<string, unknown>> {
+    const qp: Record<string, string> = {};
+    if (limit !== undefined) qp.limit = String(limit);
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/groups/${encodeURIComponent(groupId)}`,
+      undefined,
+      qp
+    );
+  }
+
+  async postAgentSessionGroupMessage(
+    groupId: string,
+    authorKey: string,
+    content: string,
+    role?: string
+  ): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { author_key: authorKey, content };
+    if (role !== undefined) body.role = role;
+    return this.request(
+      "POST",
+      `/developer/v1/agent-sessions/groups/${encodeURIComponent(groupId)}/post`,
+      body
+    );
+  }
+
+  async getAgentSessionGroupInbox(groupId: string, asKey: string): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `/developer/v1/agent-sessions/groups/${encodeURIComponent(groupId)}/inbox`,
+      undefined,
+      { as: asKey }
+    );
+  }
+
+  async deleteAgentSessionGroup(groupId: string): Promise<void> {
+    await this.request("DELETE", `/developer/v1/agent-sessions/groups/${encodeURIComponent(groupId)}`);
+  }
+
+  async getAgentMentions(asKey: string): Promise<Record<string, unknown>> {
+    return this.request("GET", "/developer/v1/agent-sessions/mentions", undefined, { as: asKey });
+  }
 }
 
 // ─── Task types ───────────────────────────────────────────
