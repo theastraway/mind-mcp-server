@@ -2718,6 +2718,21 @@ export class MindClient {
     );
   }
 
+  // ─── Agent wake targets (Grok Bot webhook routine) ─────────
+  async setAgentWakeTarget(req: { agent: string; url: string; secret?: string; runtime?: string }): Promise<unknown> {
+    return this.request("POST", "/developer/v1/agent-sessions/wake-target", req);
+  }
+
+  async listAgentWakeTargets(): Promise<unknown> {
+    return this.request("GET", "/developer/v1/agent-sessions/wake-targets");
+  }
+
+  async clearAgentWakeTarget(agent: string, runtime?: string): Promise<unknown> {
+    const qp: Record<string, string> = {};
+    if (runtime) qp.runtime = runtime;
+    return this.request("DELETE", `/developer/v1/agent-sessions/wake-target/${encodeURIComponent(agent)}`, undefined, qp);
+  }
+
   // ─── Agent Session sharing ──────────────────────────────
   // Share a live session with another MIND account as "viewer" (read-only)
   // or "replier" (viewer + may reply, which reaches the agent's next turn).

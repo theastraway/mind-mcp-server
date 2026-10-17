@@ -3583,6 +3583,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "group_post",
           "group_inbox",
           "group_delete",
+          "wake_target",
         ])
         .describe("Which agent-session operation to perform."),
       // open
@@ -3647,6 +3648,10 @@ export function createMindMcpServer(client: MindClient): McpServer {
       color: z.string().optional().describe("Sidebar chip color — sources action=create/update."),
       wake_url: z.string().optional().describe("Optional push endpoint MIND POSTs {session_id, reply} to (fire-and-forget, 5s timeout) when the user replies — sources action=create/update."),
       force: z.boolean().optional().describe("sources action=delete: also delete the source's sessions instead of failing 409 when sessions exist."),
+      // wake_target (Grok Bot webhook routine push)
+      wake_action: z.enum(["set", "list", "clear"]).optional().describe("Sub-action for action=wake_target (default set): set registers this bot's webhook-routine URL, list shows registered bots (masked), clear removes one."),
+      url: z.string().optional().describe("wake_target set: the https URL of this bot's webhook routine. Owner-private, never echoed back."),
+      secret: z.string().optional().describe("wake_target set: the webhook routine's API key; MIND sends it as 'Authorization: Bearer <secret>'. Owner-private, never echoed back."),
       // share / list_shares / revoke_share
       grantee_username: z.string().optional().describe("MIND username to share with — required for share."),
       role: z.enum(["viewer", "replier"]).optional().describe("Role to grant — share (default \"viewer\"). \"replier\" additionally allows the grantee to reply, which reaches you via wake_url."),
@@ -3825,6 +3830,17 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 return err(`Unknown source_action: ${_exhaustive}`);
               }
             }
+          }
+
+          case "wake_target": {
+            const wakeAction = args.wake_action ?? "set";
+            if (wakeAction === "list") return ok(await client.listAgentWakeTargets());
+            if (!args.agent) return err(`Error: 'agent' is required for wake_target wake_action=${wakeAction}.`);
+            const agentName = typeof args.agent === "string" ? args.agent : args.agent.label ?? args.agent.key;
+            if (!agentName) return err("Error: 'agent' must be a bot name for wake_target.");
+            if (wakeAction === "clear") return ok(await client.clearAgentWakeTarget(agentName, args.runtime));
+            if (!args.url) return err("Error: 'url' (the webhook routine URL) is required for wake_target wake_action=set.");
+            return ok(await client.setAgentWakeTarget({ agent: agentName, url: args.url, secret: args.secret, runtime: args.runtime }));
           }
 
           case "share": {
