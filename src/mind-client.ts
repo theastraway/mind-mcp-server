@@ -633,6 +633,13 @@ export class MindClient {
     } else if (this.secureUnlockTokens.size > 0) {
       headers["X-Unlock-Token"] = Array.from(this.secureUnlockTokens.values()).join(",");
     }
+    // Daebot bot MINDs: MIND_BOT=<slug> runs every call against that bot's graph
+    // workspace inside the same account (same key, same billing). Routes that are not
+    // bot-aware answer 400 {"error":"bot_unsupported"} instead of touching the main MIND.
+    const bot = (process.env.MIND_BOT || "").trim();
+    if (bot) {
+      headers["X-MIND-Bot"] = bot;
+    }
 
     const res = await fetch(url, {
       method,
