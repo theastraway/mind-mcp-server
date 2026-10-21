@@ -2685,6 +2685,25 @@ export class MindClient {
     );
   }
 
+  /** The 15-minute MIND sync heartbeat (AGENTS.md section 2.11). */
+  async agentSessionHeartbeat(req: {
+    source_key: string;
+    agent?: string | { key: string; label?: string };
+    runtime?: string;
+    unsynced?: Array<Record<string, unknown>>;
+  }): Promise<AgentSessionHeartbeatResponse> {
+    return this.request("POST", "/developer/v1/agent-sessions/heartbeat", req);
+  }
+
+  /** Every undelivered owner reply across the caller's sessions (read-only) -- backs mind://sessions/pending. */
+  async pendingAgentReplies(): Promise<{ pending: Array<Record<string, unknown>>; count: number }> {
+    return this.request("GET", "/developer/v1/agent-sessions/replies/pending", undefined, {
+      min_age_seconds: "0",
+      max_age_hours: "720",
+      limit: "200",
+    });
+  }
+
   async deleteAgentSession(sessionId: string): Promise<void> {
     await this.request("DELETE", `/developer/v1/agent-sessions/${encodeURIComponent(sessionId)}`);
   }
@@ -3465,6 +3484,17 @@ export interface OpenAgentSessionResponse {
   source_key?: string;
   agent_key?: string | null;
   agent_label?: string | null;
+}
+
+export interface AgentSessionHeartbeatResponse {
+  ok: boolean;
+  source_key: string;
+  last_heartbeat_at: string;
+  server_time: string;
+  next_beat_seconds: number;
+  pending_replies: Array<{ session_id: string; reply_id: string; content: string; created_at: string }>;
+  appended?: Record<string, number>;
+  unsynced_errors?: Array<Record<string, unknown>>;
 }
 
 export interface AppendAgentSessionResponse {

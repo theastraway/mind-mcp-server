@@ -37,6 +37,7 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { MindApiError, MindClient, type ContextResponse } from "./mind-client.js";
 import {
@@ -45,6 +46,7 @@ import {
   AGENT_STANDARD_MD,
   buildSyncLocalDocsPrompt,
   buildSyncAgentSessionPrompt,
+  buildSyncHeartbeatPrompt,
 } from "./integration-guide.js";
 
 // ─── Shared MCP result helpers ──────────────────────────────
@@ -305,6 +307,96 @@ export function createMindMcpServer(client: MindClient): McpServer {
         };
       }
     },
+  );
+
+  // ─── mind-sync-heartbeat prompt ──────────────────────────
+  // The body of the 15-minute "MIND sync heartbeat" routine every agent
+  // creates in its OWN scheduler (AGENTS.md section 2.11). MIND cannot wake a
+  // client, so the standard is: install a recurring routine whose whole body
+  // is this prompt.
+  server.registerPrompt(
+    "mind-sync-heartbeat",
+    {
+      title: "MIND sync heartbeat (run every 15 minutes)",
+      description:
+        "The body of the recurring 15-minute routine named \"MIND sync heartbeat\": one mind_sessions action=heartbeat call, answer every pending owner reply in your own app, append both sides. Create the routine once at install; paste this prompt as its whole body.",
+    },
+    async () => ({
+      messages: [
+        { role: "user" as const, content: { type: "text" as const, text: buildSyncHeartbeatPrompt() } },
+      ],
+    }),
+  );
+
+  // ─── mind://sessions/pending (+ subscribe) ──────────────
+  // Pending owner replies across all of this key's sessions. A client that
+  // supports resources/subscribe gets notifications/resources/updated when a
+  // NEW reply appears, so it need not wait for the next 15-minute beat. The
+  // stdio server can push (long-lived process): it polls the REST pending feed
+  // every PENDING_POLL_MS while at least one subscription is open. The hosted
+  // /mcp route is stateless and cannot push; it serves the same resource.
+  const PENDING_URI = "mind://sessions/pending";
+  const PENDING_POLL_MS = Number(process.env.MIND_PENDING_POLL_MS) > 0 ? Number(process.env.MIND_PENDING_POLL_MS) : 30_000;
+  const pendingSubscribers = new Set<string>();
+  let pendingSeen: Set<string> | null = null;
+  let pendingTimer: ReturnType<typeof setInterval> | null = null;
+  const pendingList = async () => {
+    const res = await client.pendingAgentReplies();
+    return (res.pending ?? []).map((p) => ({
+      session_id: p.session_id,
+      reply_id: p.reply_id ?? p.message_id,
+      content: p.content,
+      created_at: p.created_at,
+      agent: p.agent,
+    }));
+  };
+  const pollPending = async () => {
+    try {
+      const ids = new Set((await pendingList()).map((p) => String(p.reply_id)));
+      const hasNew = pendingSeen !== null && [...ids].some((id) => !pendingSeen!.has(id));
+      pendingSeen = ids;
+      if (hasNew) await server.server.sendResourceUpdated({ uri: PENDING_URI });
+    } catch {
+      /* transient; next tick retries */
+    }
+  };
+  server.server.registerCapabilities({ resources: { subscribe: true } });
+  server.server.setRequestHandler(SubscribeRequestSchema, async (req) => {
+    pendingSubscribers.add(req.params.uri);
+    if (req.params.uri === PENDING_URI && !pendingTimer) {
+      pendingSeen = null;
+      void pollPending();
+      pendingTimer = setInterval(() => void pollPending(), PENDING_POLL_MS);
+      pendingTimer.unref?.();
+    }
+    return {};
+  });
+  server.server.setRequestHandler(UnsubscribeRequestSchema, async (req) => {
+    pendingSubscribers.delete(req.params.uri);
+    if (!pendingSubscribers.has(PENDING_URI) && pendingTimer) {
+      clearInterval(pendingTimer);
+      pendingTimer = null;
+    }
+    return {};
+  });
+  server.registerResource(
+    "sessions-pending",
+    PENDING_URI,
+    {
+      title: "Pending owner replies",
+      description:
+        "Owner replies typed in MINDbots / MIND Chat that no agent has answered yet, across all your open sessions, oldest first. Subscribe (resources/subscribe) to be notified when a new one arrives; otherwise read it on every 15-minute heartbeat. Reading never marks a reply delivered; an append does.",
+      mimeType: "application/json",
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({ pending_replies: await pendingList() }, null, 2),
+        },
+      ],
+    }),
   );
 
   // ─── adopt-agent-standard prompt ─────────────────────────
@@ -3551,8 +3643,9 @@ export function createMindMcpServer(client: MindClient): McpServer {
       "6) SHARE — to let another MIND user follow this session, call action=share with grantee_username and role (\"viewer\" read-only, the default, or \"replier\" which also lets them reply — a reply is a live action that wakes your process via wake_url, so grant it deliberately). It's a live mirror, never a copy: they always see the current transcript, and revoking (action=revoke_share) removes their access immediately. Never share a session with anyone who shouldn't see its full transcript. " +
       "7) AGENT FILE — if you are a named, standing agent (not a bare runtime), keep your agent file current with action=agent_doc_update (editor=\"agent\", with a `note`) whenever your role, rules or standing work change; read it anytime with action=agent_doc_get. " +
       "8) RESUME ANYWHERE — when the user says \"run my <Agent> session\" / \"be <Agent>\" / \"resume <Agent>\", call action=resume with agent=<Agent> and adopt its `resume_prompt` verbatim as your operating brief for the rest of the turn — it already carries your agent file, attached context, where you left off, and any pending replies.\n" +
+      "9) HEARTBEAT — every 15 minutes from YOUR OWN scheduler (MIND cannot wake you): action=heartbeat with source_key, agent, runtime (+ optional unsynced turns). Returns pending_replies across your open sessions, oldest first (session_id, reply_id, content, created_at), plus next_beat_seconds. Answer each in your own app, then append both sides; the append marks it delivered, a heartbeat never does. Install once: a recurring routine named \"MIND sync heartbeat\" whose body is the MCP prompt mind-sync-heartbeat. MINDbots shows \"Sync stale\" after 20 minutes of silence.\n" +
       "Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads.\n\n" +
-      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project), agent_doc_get (read a standing agent's file — its role/rules/tools/standing-work doc, identified by `agent_key`; returns a starter template when none exists yet), agent_doc_update (save a new version of that file; `editor` is \"user\" or \"agent\" — \"agent\" requires a `note` saying what changed and why; a stale `base_version` 409s with the current doc instead of clobbering a concurrent edit), attach (replace the full list of Life projects/focuses/workspaces/repos an agent is connected to, by `agent_key` and `attachments`), mentions (read/mark-delivered this key's pending @mentions), group_create, group_list, group_get, group_post, group_inbox, group_delete (see GROUP CHATS / @ MENTIONS below), resume (pick up a named agent — `agent` — wherever it last left off: its agent file, attached context with live summaries, the previous session's tail/summary, any pending replies, and a ready-to-adopt `resume_prompt`; also opens a fresh continuation session for you to keep working in).\n\n" +
+      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), heartbeat (the 15-minute sync beat), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project), agent_doc_get (read a standing agent's file — its role/rules/tools/standing-work doc, identified by `agent_key`; returns a starter template when none exists yet), agent_doc_update (save a new version of that file; `editor` is \"user\" or \"agent\" — \"agent\" requires a `note` saying what changed and why; a stale `base_version` 409s with the current doc instead of clobbering a concurrent edit), attach (replace the full list of Life projects/focuses/workspaces/repos an agent is connected to, by `agent_key` and `attachments`), mentions (read/mark-delivered this key's pending @mentions), group_create, group_list, group_get, group_post, group_inbox, group_delete (see GROUP CHATS / @ MENTIONS below), resume (pick up a named agent — `agent` — wherever it last left off: its agent file, attached context with live summaries, the previous session's tail/summary, any pending replies, and a ready-to-adopt `resume_prompt`; also opens a fresh continuation session for you to keep working in).\n\n" +
       "GROUP CHATS — group_create (title, participant_keys: 2-20 source keys) opens a group thread; group_post (group_id, author_key, content) appends a message and delivers it into every OTHER participant's durable @mention inbox (see action=mentions) — group membership is an implicit mention of everyone else in the room; group_get (group_id) reads the full thread; group_list lists your groups; group_inbox (group_id, as_key) is a group-scoped view of the same inbox action=mentions reads; group_delete removes a group and its thread. " +
       "@ MENTIONS — writing \"@<source_key>\" inside ANY posted content (a 1:1 session's append/reply, or a group_post) durably queues a pending mention for that key, independent of whether it has an open session right now or lives in a different chat/group entirely. action=mentions (as_key) returns and marks delivered every pending mention of that key — poll it the same way you poll action=inbox.",
     {
@@ -3584,6 +3677,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "group_inbox",
           "group_delete",
           "wake_target",
+          "heartbeat",
         ])
         .describe("Which agent-session operation to perform."),
       // open
@@ -3671,6 +3765,11 @@ export function createMindMcpServer(client: MindClient): McpServer {
         )
         .optional()
         .describe("The FULL replacement list of what this agent is connected to — required for attach. kind=\"project\"/\"focus\" ids are Life item ids, \"workspace\" is a workspace id, \"repo\" is \"owner/name\"."),
+      // heartbeat
+      unsynced: z
+        .array(z.record(z.string(), z.any()))
+        .optional()
+        .describe("heartbeat: turns since your last append that MIND has not seen. Each item {session_id, role, content} or {session_id, messages:[...]}. Appended WITHOUT marking pending replies delivered."),
       // groups / mentions
       as_key: z.string().optional().describe("Which agent key is asking — required for mentions / group_inbox: whose durable @mention inbox to read (and mark delivered)."),
       group_id: z.string().optional().describe("A group's id, returned by group_create — required for group_get/group_post/group_inbox/group_delete."),
@@ -3766,6 +3865,19 @@ export function createMindMcpServer(client: MindClient): McpServer {
               await client.getAgentSession(session_id, {
                 limit: args.limit,
                 before_seq: args.before_seq,
+              })
+            );
+          }
+
+          case "heartbeat": {
+            const { source_key } = args;
+            if (!source_key) return err("Error: 'source_key' is required for heartbeat.");
+            return ok(
+              await client.agentSessionHeartbeat({
+                source_key,
+                agent: args.agent,
+                runtime: args.runtime,
+                unsynced: args.unsynced,
               })
             );
           }
