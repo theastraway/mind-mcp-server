@@ -148,7 +148,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
     {
       title: "MIND Integration Guide",
       description:
-        "Complete playbook for integrating any AI agent with MIND — the three integration paths (MCP server, OpenClaw plugin, REST API), authentication, the session protocol, all 45 tools, REST endpoint mapping, and common recipes.",
+        "Complete playbook for integrating any AI agent with MIND — the three integration paths (MCP server, Daebot, REST API), authentication, the session protocol, all 45 tools, REST endpoint mapping, and common recipes.",
       mimeType: "text/markdown",
     },
     async (uri) => ({
