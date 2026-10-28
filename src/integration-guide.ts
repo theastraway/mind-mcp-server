@@ -2103,7 +2103,7 @@ export const SERVER_INSTRUCTIONS = `MIND is the persistent memory and knowledge-
 
 ═══ HOW TO INTEGRATE — pick the path for your runtime ═══
 • You are an MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any MCP host): you are already connected. Call the mind_* tools directly — nothing else to install.
-• You are an OpenClaw agent: do NOT use this MCP server. Install the OpenClaw plugin instead — \`openclaw plugins install @astramindapp/openclaw-mind\` — which exposes the same MIND surface as native OpenClaw tools.
+• You want a ready-made agent: use Daebot, a public agent with MIND built in. Sign in with MIND at https://daebot.live (source: https://github.com/theastraway/daebot).
 • You are any other runtime (custom agent, script, n8n, backend): call the REST API directly at https://m-i-n-d.ai/developer/v1 with header \`X-API-Key: <key>\`. Every mind_* tool maps 1:1 to a /developer/v1 endpoint.
 
 AUTH: every path needs a MIND API key (prefix \`mind_\`). Get one at https://m-i-n-d.ai → Settings → Developer → API Keys. For this MCP server, set env var MIND_API_KEY (and optionally MIND_BASE_URL). The admin tools (mind_admin, mind_agents, mind_tickets) require an admin-scoped key.
@@ -2179,10 +2179,10 @@ matches your runtime. They all read and write the *same* knowledge graph.
 | Your runtime | Path | How to connect |
 |---|---|---|
 | MCP host — Claude Code, Claude Desktop, Cursor, Windsurf, Zed, any MCP client | **MCP server** | Remote, no install: add \`https://www.m-i-n-d.ai/mcp\` as a custom connector and sign in via browser OAuth — or, if your host has no OAuth flow but lets you add a header, use the same URL with \`Authorization: Bearer mind_<key>\` and no OAuth at all. Prefer local stdio? \`npx -y --package=@astramindapp/mcp-server mind-mcp-setup\`, or add the server to your MCP config. You are reading this because you are already connected — just call the \`mind_*\` tools. |
-| OpenClaw agent | **OpenClaw plugin** | \`openclaw plugins install @astramindapp/openclaw-mind\`. Do NOT install the MCP server for OpenClaw — OpenClaw consumes a plugin, not an MCP server, for its memory slot. The plugin exposes MIND as native OpenClaw tools. |
+| A ready-made agent, no setup | **Daebot** | Open https://daebot.live and sign in with MIND. Daebot is a public agent with MIND built in (source: https://github.com/theastraway/daebot). |
 | Anything else — custom agent, backend service, script, n8n, automation | **REST API** | Call \`https://m-i-n-d.ai/developer/v1/*\` directly with header \`X-API-Key: <key>\`. Every MCP tool is a thin wrapper over one of these endpoints. |
 
-All three paths are equivalent in capability. The MCP server and OpenClaw plugin
+All three paths are equivalent in capability. The MCP server and Daebot
 are convenience layers over the same \`/developer/v1\` REST API.
 
 **No browser OAuth in your host? Use a key on the same URL.** Every host that
