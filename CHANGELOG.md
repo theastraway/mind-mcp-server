@@ -4,6 +4,55 @@ All notable changes to `@astramindapp/mcp-server` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added — MIND Sign identity verification
+
+- **`mind_sign`** `create` and `setup` accept `identity_verification: true`. When set, every signer must take a live camera photo and read a unique spoken statement (their name, the document title and a one-time four-digit code) on camera before the signing link lets them finish. The photo and the recording are SHA-256 hashed, stored with the envelope, printed on the certificate of completion (photo included) and surfaced in `get`/`audit` as `signers[].verification` (`status`, `match_score`, `transcript`, `captured_at`, `has_photo`, `has_recording`). Backed by the new public `POST /api/sign/public/{token}/verify` endpoint and the owner-only `GET /api/sign/envelopes/{id}/signers/{index}/verification/{photo|recording}` evidence endpoints. Default false, so existing agent flows are unchanged. Hosted `/mcp` serves the same argument.
+
+## [0.32.0] — 2026-11-05
+
+### Added — Repo Folders over MCP
+
+- **`mind_folders`** gains four actions: `link_repo` (folder_id, owner, name, optional branch), `pull_repo` (starts a background pull and returns a job_id; pass job_id to poll), `push_repo` (message, optional paths; never force-pushes), `repo_status` (linked repo, head sha, last pulled/pushed, changed documents). Backed by new `/developer/v1/folders/{id}/repo/*` routes. Needs GitHub connected under Integrations and the server-side MIND_REPOS_GITHUB_ENABLED flag. Hosted `/mcp` serves the same actions.
+
+## [0.31.0] — 2026-11-02
+
+### Added — Workspaces, Projects and To-dos (3 new tools)
+
+- **`mind_workspaces`** (list, get, create, update, delete, members, add_member, remove_member): the top-level LIFE container. A Focus is now a Workspace; `mind_focuses` and `mind_life` are unchanged and described as aliases.
+- **`mind_projects`** (list, get, create, update, delete, progress, set_status): projects inside a workspace, with the client-facing `portal_status` (requested, scoped, in_progress, in_review, feedback, complete, on_hold, declined) and a to-do progress rollup.
+- **`mind_todos`** (list, search, get, create, update, delete, start, complete, reopen, schedule, unschedule, comment, ask, decide, reply, thread, progress, waiting): to-dos inside a project, with calendar scheduling and a per-to-do thread where a question or decision waits for a reply. Backed by `/developer/v1/workspaces`, `/developer/v1/todos` and `/developer/v1/projects/{id}/progress`; edits sync with the Astra AI client portal.
+- Hosted `/mcp` (`backend/routes/mcp_server_routes.py`) serves the same three tools. Tool count is now 48.
+
+## 0.30.1 - 2026-10-29
+
+Republish of 0.30.0. npm refused 0.30.0 because a staged copy of that version already existed. No code changes.
+
+## [0.30.0] — 2026-10-29
+
+Publishes everything since 0.29.2: the AGENT SESSION REPLIES hard rule and wake-target actions (PR 2936) plus the packaged reply poller and Grok self-setup (this release).
+
+### Added — `poll` command: owner replies reach a live session within about 10 seconds
+
+- **`npx -y @astramindapp/mcp-server poll --session <mind_session_id>`** (also `mind-mcp poll --session <id>`). Every 10 seconds it does a non-consuming `GET /developer/v1/agent-sessions/{id}?limit=30`; only when that shows an owner reply not yet delivered (origin `mind`, role `user`, no `delivered_at`) does it call `GET /{id}/inbox` (which marks it delivered) and print ONE stdout line per reply: `[BotsByMIND] <owner> replied in MIND (HH:MM): <content>` (newlines collapsed, 2000 characters max). Nothing else is ever written to stdout, because under Claude Code's Monitor tool each stdout line wakes the agent; logs and errors go to stderr only. HTTP errors back off exponentially to 60 seconds and never end the process (a session id that answers 404 five times in a row exits 3).
+- **Options:** `--interval <seconds>` (default 10, minimum 5), `--ppid <pid>` (exit 0 when that process is gone), `--help`.
+- **Key and base URL:** `MIND_API_KEY`, else the `env.MIND_API_KEY` of the MIND entry in Claude Code's config (local scope, then `./.mcp.json`, then user scope), Cursor, Windsurf, VS Code or Claude Desktop (the files `mind-mcp-setup` writes). Base URL is `MIND_BASE_URL`, else the entry's, else `https://www.m-i-n-d.ai`. The key is never printed. Reply text is scrubbed of the key and of `key=value` secrets before it is printed.
+- `test/poll.test.mjs`: 23 tests against a fake HTTP server (one line per reply, `/inbox` called once, silent when nothing is pending, key never in stdout or stderr, back-off, 404 exit, `--ppid`, key resolution, and the real CLI as a child process).
+
+### Changed — the AGENT SESSION REPLIES hard rule names the poll command
+
+- Step (1) for Claude Code is now: right after `mind_sessions open`, arm Claude Code's Monitor tool with `npx -y @astramindapp/mcp-server poll --session <your MIND session_id>` (description "BotsByMIND replies for this session"), load Monitor with ToolSearch first if it is deferred, and re-arm it the moment it expires (Monitor runs cap at 30 minutes). The curl loop stays as the no-npm fallback. The Grok and other-runtime steps are unchanged except that the Grok step now says a `wake_setup_required` response means the wake routine is still missing. One canonical copy (`AGENT_SESSION_REPLIES_RULE`) feeds every surface, as before.
+
+### Added — Grok self-setup: a Grok bot that has no wake webhook is told so
+
+- Instructions alone did not work (two real Grok bots used MIND after the rule shipped and neither registered a wake target). Now a `mind_sessions` `open`, `append`, `reply` or `inbox` on a **Grok session whose agent has no wake target on that account** returns `wake_setup_required: true` and `wake_setup` (ask the owner to confirm creating a "MIND wake" routine, create it, get its URL and key into MIND, append a note), and the MCP text result starts with `ACTION REQUIRED: you have no MIND wake webhook. <wake_setup>`. The prompt rides at most one response per session per day, and disappears for good once a target is registered with `wake_target_set` (or pasted into the agent page's Wake webhook panel). One indexed lookup, cached per (account, agent) for 60 seconds; no lookup at all for other runtimes. The server behaviour is in the MINDapp backend (`backend/services/agent_wake_targets.py`), so every client gets it with no upgrade; this package version adds the `okSession` text prefix for the stdio server and the response types.
+
+### Added — AGENT SESSION REPLIES hard rule + flat wake-target actions (PR 2936)
+
+- **Hard rule in every surface:** an agent must keep receiving owner replies for as long as its session is active, not only the next time it calls MIND. Claude Code (or any runtime with a monitor/background tool) polls right after `open`; a Grok Bot owns one routine named "MIND wake" with a webhook trigger and registers it once with `wake_target_set`; every other runtime calls `inbox` at least once per turn and every 60 seconds while it works. One canonical copy (`AGENT_SESSION_REPLIES_RULE` in `src/integration-guide.ts`) feeds `SERVER_INSTRUCTIONS` (own section), the `mind_sessions` tool description, the integration guide, the hosted catalog (`backend/data/mcp_tools.json`) and `skills/mind/SKILL.md`.
+- **`mind_sessions` actions `wake_target_set` (agent, url, secret, runtime default `grok`), `wake_targets` and `wake_target_clear` (agent, runtime).** Additive flat aliases of the older `wake_target` + `wake_action` form. The secret is sent as `Authorization: Bearer <secret>` and is never echoed back.
+
 ## [0.26.0] — 2026-09-17
 
 ### Changed — prompt-surface release: tool descriptions are the agent-facing system prompt

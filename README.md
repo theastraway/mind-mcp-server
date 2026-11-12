@@ -1,6 +1,8 @@
 # @astramindapp/mcp-server
 
-**MIND MCP Server** — The most complete AI memory layer available. 44 tools, 384 actions.
+[![Astramindapp MCP server](https://mcprush.com/badge/astramindapp-mcp/card.svg)](https://mcprush.com/to/astramindapp-mcp?ref=badge)
+
+**MIND MCP Server** — The most complete AI memory layer available. 48 tools, 430 actions.
 
 Your AI agents forget everything between sessions. MIND fixes that. Connect any MCP-compatible agent to your personal knowledge graph — with emotional intelligence, CRM, life management, site-wide assignable tasks, social features, self-training, autonomous insights, an admin-only Agent Command Center with per-agent ticket queues, an admin-only **Featured Minds Portal** (curate the public marketplace at `m-i-n-d.ai` from any MCP client — model, public chat prompt, temperature, brand fields, write-through to the linked user's profile), and more.
 
@@ -21,6 +23,9 @@ Your AI agents forget everything between sessions. MIND fixes that. Connect any 
 | `mind_focuses` | 5 | Focus → Project buckets — the top-level groupings above Life Projects |
 | `mind_crm` | 7 | Contacts, pipeline, activity logging, interaction history |
 | `mind_tasks` | 9 | Site-wide tasks — assignable, completable work items on projects, contacts, or agents, plus completion reports |
+| `mind_workspaces` | 8 | Workspaces — top-level LIFE containers (a Focus is now a Workspace); list/get/create/update/delete plus members/add_member/remove_member |
+| `mind_projects` | 7 | Projects inside a Workspace — list/get/create/update/delete, progress rollup, set_status (client-facing portal_status) |
+| `mind_todos` | 18 | To-dos inside a Project — CRUD, start/complete/reopen, schedule on the calendar, per-to-do thread (comment/ask/decide/reply), waiting, progress, search |
 | `mind_graph` | 3 | Graph stats, diagnostics, entity labels |
 | `mind_admin` | 11 | **Admin-only.** User provisioning + the **Featured Minds Portal**: full CRUD over the public marketplace (get_full / update / update_owner_profile / reorder / delete), tier/credit management |
 | `mind_sense` | 7 | MINDsense emotional intelligence — state, signals, timeline, KG weights, spikes |
@@ -48,7 +53,7 @@ Your AI agents forget everything between sessions. MIND fixes that. Connect any 
 | `mind_sheets` | 14 | Airtable-style tables (m-i-n-d.ai/#/sheets) — tables, columns, rows, CSV export |
 | `mind_email` | 14 | MIND Email Manager (m-i-n-d.ai/#/email) — inbox, threads, search, AI draft, ⚠️ send (outward), voice/tone preferences |
 | `mind_checklists` | 13 | Kanon checklists (kanon.theastraway.com) attached to Life items or tasks — templates, runs, toggle_item, progress rollups |
-| `mind_sign` | 12 | MIND Sign e-signature (m-i-n-d.ai/#/mindsign) — envelopes, fields, ⚠️ send/resend (outward), void, audit, certificate |
+| `mind_sign` | 12 | MIND Sign e-signature (m-i-n-d.ai/#/mindsign) — envelopes, fields, optional `identity_verification` (camera photo + recorded spoken statement per signer), ⚠️ send/resend (outward), void, audit, certificate |
 | `mind_invoices` | 9 | Invoice Agent (m-i-n-d.ai/#/invoiceagent) — create/update, ask a question about an invoice, ⚠️ invite (outward), received invoices |
 | `mind_books` | 9 | MIND Books accounting (m-i-n-d.ai/#/mind-books) — vendors, customers, chart of accounts, bills, invoices overview |
 | `mind_timer` | 8 | Tempo time tracking — start/stop, manual entries, summaries |
@@ -159,6 +164,16 @@ Add to `.cursor/mcp.json`:
 
 The server works with any tool that supports Model Context Protocol — Claude, GPT, Gemini, Llama, or any future model.
 
+### Hear your owner's replies while a session is open: `poll`
+
+An agent that logs its session with `mind_sessions` keeps receiving replies typed in BotsByMIND or MIND Chat by running the packaged poller. Under Claude Code, right after `mind_sessions action=open`, arm the Monitor tool with:
+
+```
+npx -y @astramindapp/mcp-server poll --session <your MIND session_id>
+```
+
+(Monitor description: `BotsByMIND replies for this session`. Load Monitor with ToolSearch first if it is deferred, and re-arm it when it expires; Monitor runs cap at 30 minutes.) Every 10 seconds it checks the session without consuming anything, and when your owner has replied it prints exactly one stdout line per reply, `[BotsByMIND] <owner> replied in MIND (HH:MM): <text>`, which wakes the agent. Logs go to stderr only; the API key is never printed. Options: `--interval <seconds>` (default 10, minimum 5), `--ppid <pid>` (exit when that process is gone). The key comes from `MIND_API_KEY` or the MIND entry in your MCP config (the file `mind-mcp-setup` wrote); the base URL from `MIND_BASE_URL` (default `https://www.m-i-n-d.ai`). Grok Bots cannot be polled into: they register a "MIND wake" webhook with `mind_sessions action=wake_target_set`, and MIND tells a Grok session that has none (`wake_setup_required`) how to set it up.
+
 ## How It Works
 
 ```
@@ -262,6 +277,25 @@ Loads five structured sections at session start:
 | `list`, `create`, `update`, `delete`, `get` | Contact CRUD with pipeline stages |
 | `log_activity` | Record calls, emails, meetings, notes |
 | `list_activities` | View interaction history |
+
+### `mind_workspaces` / `mind_projects` / `mind_todos` — Workspace → Project → To-do
+
+LIFE is now Workspaces → Projects → To-dos (a Focus is a Workspace; `mind_focuses` and `mind_life` keep working). MIND owns the data and the Astra AI client portal reads and writes the same records, so a project or to-do edited through MCP shows up in the portal and a client reply in the portal shows up here.
+
+```
+mind_workspaces({ action: "create", name: "Acme" })                    // -> workspace_id
+mind_workspaces({ action: "add_member", workspace_id, username: "jane", role: "member" })
+mind_projects({ action: "create", workspace_id, title: "Website refresh" })
+mind_projects({ action: "set_status", project_id, portal_status: "in_review" })
+mind_todos({ action: "create", project_id, title: "Send mockups", due_date: "2026-11-10" })
+mind_todos({ action: "start", todo_id })
+mind_todos({ action: "schedule", todo_id, start: "2026-11-09T15:00:00Z", end: "2026-11-09T16:00:00Z" })
+mind_todos({ action: "ask", todo_id, body: "Which logo variant do you prefer?" })
+mind_todos({ action: "decide", todo_id, body: "Pick a launch date", options: ["Nov 15", "Nov 22"] })
+mind_todos({ action: "reply", todo_id, comment_id, body: "Nov 22", choice: "Nov 22" })
+mind_todos({ action: "waiting", workspace_id })                         // to-dos waiting on a reply
+mind_todos({ action: "progress", project_id })                          // total/open/in_progress/blocked/done/percent
+```
 
 ### `mind_tasks` — Site-Wide Tasks
 

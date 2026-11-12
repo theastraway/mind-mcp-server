@@ -5,6 +5,8 @@
  * All methods return typed responses or throw on HTTP errors.
  */
 
+import { edgeFallbackFetch } from "./edge-fallback.js";
+
 export interface MindClientConfig {
   baseUrl: string;
   apiKey: string;
@@ -67,6 +69,9 @@ export interface DocumentCreateRequest {
   title: string;
   content: string;
   source?: string;
+  tags?: string[];
+  /** Folder id, name, or "Parent/Child" path. Omit and MIND files the document. */
+  folder?: string;
 }
 
 export interface DocumentResponse {
@@ -127,7 +132,9 @@ export interface EntryCreateRequest {
   title?: string;
   content: string;
   tags?: string[];
-  /** Earlier own records this entry replaces (id, exact title, or "Journal Entry: <title>"). */
+  /** Folder id, name, or "Parent/Child" path. Omit and MIND files the entry's document. */
+  folder?: string;
+  /** Earlier own records this entry replaces (id, exact title, or "Agent Entry: <title>" / older "Journal Entry: <title>"). */
   supersedes?: string[];
 }
 
@@ -583,6 +590,7 @@ export class MindApiError extends Error {
 
 export class MindClient {
   private baseUrl: string;
+  private edgeFetch: typeof fetch = edgeFallbackFetch();
   private apiKey: string;
   // Secure Folders: unlock tokens (one per folder_id) live in memory for the
   // life of this MCP server process only -- never persisted to disk, never
@@ -641,7 +649,9 @@ export class MindClient {
       headers["X-MIND-Bot"] = bot;
     }
 
-    const res = await fetch(url, {
+    // Retries a web-edge HTML 403/429/503 (Cloudflare managed rules on plain-text bodies that look
+    // like SQL / path traversal / shell) with the JSON body gzipped; the working route is remembered.
+    const res = await this.edgeFetch(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -816,6 +826,44 @@ export class MindClient {
     passphrase: string,
   ): Promise<{ unlock_token: string; expires_at: string; folder_id: string }> {
     return this.request("POST", `/developer/v1/folders/${folderId}/unlock`, { passphrase });
+  }
+
+  /** Repo Folders (GitHub two-way sync). All four 404 when the server has
+   *  MIND_REPOS_GITHUB_ENABLED off. */
+  async linkRepoFolder(
+    folderId: string,
+    owner: string,
+    name: string,
+    branch?: string,
+  ): Promise<{ folder: Record<string, unknown> }> {
+    const body: Record<string, unknown> = { owner, name };
+    if (branch) body.branch = branch;
+    return this.request("POST", `/developer/v1/folders/${folderId}/repo/link`, body);
+  }
+
+  /** Starts a background pull (returns a job_id), or polls one when jobId is given. */
+  async pullRepoFolder(
+    folderId: string,
+    jobId?: string,
+  ): Promise<{ job_id: string; status: string; result?: unknown; error?: string | null }> {
+    if (jobId) {
+      return this.request("GET", `/developer/v1/folders/${folderId}/repo/jobs/${jobId}`);
+    }
+    return this.request("POST", `/developer/v1/folders/${folderId}/repo/pull`, {});
+  }
+
+  async pushRepoFolder(
+    folderId: string,
+    message: string,
+    paths?: string[],
+  ): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { message };
+    if (paths && paths.length) body.paths = paths;
+    return this.request("POST", `/developer/v1/folders/${folderId}/repo/push`, body);
+  }
+
+  async repoFolderStatus(folderId: string): Promise<Record<string, unknown>> {
+    return this.request("GET", `/developer/v1/folders/${folderId}/repo/status`);
   }
 
   async requestFolderReset(folderId: string): Promise<{ status: string; expires_at?: string }> {
@@ -1063,6 +1111,88 @@ export class MindClient {
     const params: Record<string, string> = {};
     if (hard) params.hard = "true";
     return this.request("DELETE", `/developer/v1/focuses/${focusId}`, undefined, params);
+  }
+
+  // ─── Workspaces → Projects → To-dos (LIFE v2, contract 2026-11-02) ──
+  // Thin wrappers over /developer/v1/workspaces, /todos and
+  // /workspaces/{id}/projects. A Focus is now a Workspace (alias kept).
+
+  private static qs(params: Record<string, unknown>): Record<string, string> | undefined {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === "") continue;
+      out[k] = typeof v === "string" ? v : String(v);
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  async listWorkspaces(params: Record<string, unknown> = {}): Promise<any> {
+    return this.request("GET", "/developer/v1/workspaces", undefined, MindClient.qs(params));
+  }
+  async getWorkspace(id: string): Promise<any> {
+    return this.request("GET", `/developer/v1/workspaces/${encodeURIComponent(id)}`);
+  }
+  async createWorkspace(body: Record<string, unknown>): Promise<any> {
+    return this.request("POST", "/developer/v1/workspaces", body);
+  }
+  async updateWorkspace(id: string, body: Record<string, unknown>): Promise<any> {
+    return this.request("PATCH", `/developer/v1/workspaces/${encodeURIComponent(id)}`, body);
+  }
+  async deleteWorkspace(id: string): Promise<any> {
+    return this.request("DELETE", `/developer/v1/workspaces/${encodeURIComponent(id)}`);
+  }
+  async listWorkspaceMembers(id: string): Promise<any> {
+    return this.request("GET", `/developer/v1/workspaces/${encodeURIComponent(id)}/members`);
+  }
+  async addWorkspaceMember(id: string, body: Record<string, unknown>): Promise<any> {
+    return this.request("POST", `/developer/v1/workspaces/${encodeURIComponent(id)}/members`, body);
+  }
+  async removeWorkspaceMember(id: string, memberId: string): Promise<any> {
+    return this.request("DELETE", `/developer/v1/workspaces/${encodeURIComponent(id)}/members/${encodeURIComponent(memberId)}`);
+  }
+
+  async listWorkspaceProjects(workspaceId: string, params: Record<string, unknown> = {}): Promise<any> {
+    return this.request("GET", `/developer/v1/workspaces/${encodeURIComponent(workspaceId)}/projects`, undefined, MindClient.qs(params));
+  }
+  async getProjectProgress(projectId: string): Promise<any> {
+    return this.request("GET", `/developer/v1/projects/${encodeURIComponent(projectId)}/progress`);
+  }
+
+  async listTodos(params: Record<string, unknown> = {}): Promise<any> {
+    return this.request("GET", "/developer/v1/todos", undefined, MindClient.qs(params));
+  }
+  async searchTodos(q: string, params: Record<string, unknown> = {}): Promise<any> {
+    return this.request("GET", "/developer/v1/todos/search", undefined, MindClient.qs({ q, ...params }));
+  }
+  async getTodo(id: string): Promise<any> {
+    return this.request("GET", `/developer/v1/todos/${encodeURIComponent(id)}`);
+  }
+  async createTodo(body: Record<string, unknown>): Promise<any> {
+    return this.request("POST", "/developer/v1/todos", body);
+  }
+  async updateTodo(id: string, body: Record<string, unknown>): Promise<any> {
+    return this.request("PATCH", `/developer/v1/todos/${encodeURIComponent(id)}`, body);
+  }
+  async deleteTodo(id: string): Promise<any> {
+    return this.request("DELETE", `/developer/v1/todos/${encodeURIComponent(id)}`);
+  }
+  async todoTransition(id: string, verb: "start" | "complete" | "reopen", body: Record<string, unknown> = {}): Promise<any> {
+    return this.request("POST", `/developer/v1/todos/${encodeURIComponent(id)}/${verb}`, body);
+  }
+  async scheduleTodo(id: string, body: Record<string, unknown>): Promise<any> {
+    return this.request("POST", `/developer/v1/todos/${encodeURIComponent(id)}/schedule`, body);
+  }
+  async unscheduleTodo(id: string): Promise<any> {
+    return this.request("DELETE", `/developer/v1/todos/${encodeURIComponent(id)}/schedule`);
+  }
+  async listTodoComments(id: string): Promise<any> {
+    return this.request("GET", `/developer/v1/todos/${encodeURIComponent(id)}/comments`);
+  }
+  async addTodoComment(id: string, body: Record<string, unknown>): Promise<any> {
+    return this.request("POST", `/developer/v1/todos/${encodeURIComponent(id)}/comments`, body);
+  }
+  async replyTodoComment(id: string, commentId: string, body: Record<string, unknown>): Promise<any> {
+    return this.request("POST", `/developer/v1/todos/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}/reply`, body);
   }
 
   // ─── Life project sharing ────────────────────────────────
@@ -3471,7 +3601,13 @@ export interface OpenAgentSessionRequest {
   project_id?: string;
 }
 
-export interface OpenAgentSessionResponse {
+/** Present (true) only on a Grok session whose agent has no MIND wake webhook yet; absent once one is registered. */
+export interface WakeSetupFields {
+  wake_setup_required?: boolean;
+  wake_setup?: string;
+}
+
+export interface OpenAgentSessionResponse extends WakeSetupFields {
   session_id: string;
   resumed: boolean;
   status: AgentSessionStatus;
@@ -3497,7 +3633,7 @@ export interface AgentSessionHeartbeatResponse {
   unsynced_errors?: Array<Record<string, unknown>>;
 }
 
-export interface AppendAgentSessionResponse {
+export interface AppendAgentSessionResponse extends WakeSetupFields {
   ok: boolean;
   seq_last: number;
   pending_replies: AgentSessionMessage[];
@@ -3520,7 +3656,7 @@ export interface GetAgentSessionResponse extends AgentSessionRecord {
   viewer_role?: "owner" | AgentSessionShareRole;
 }
 
-export interface AgentSessionInboxResponse {
+export interface AgentSessionInboxResponse extends WakeSetupFields {
   pending_replies: AgentSessionMessage[];
 }
 

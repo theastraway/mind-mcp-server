@@ -11,7 +11,7 @@
  * integration path to use for its runtime, how to authenticate, and the
  * session protocol — without having to be told.
  *
- * Tools (45):
+ * Tools (48):
  *   Memory & knowledge — mind_query, mind_remember, mind_folders,
  *     mind_folder_routes, mind_folder_suggest, mind_share (document share
  *     links), mind_context, mind_graph, mind_insights, mind_research,
@@ -47,6 +47,7 @@ import {
   buildSyncLocalDocsPrompt,
   buildSyncAgentSessionPrompt,
   buildSyncHeartbeatPrompt,
+  AGENT_SESSION_REPLIES_RULE,
 } from "./integration-guide.js";
 
 // ─── Shared MCP result helpers ──────────────────────────────
@@ -63,6 +64,48 @@ const err = (t: string) => ({
 const ok = (result: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
 });
+
+/**
+ * mind_sessions open / append / reply / inbox: text that cannot be skimmed past.
+ *  1. Owner replies (non-empty pending_replies) come FIRST under OWNER_REPLY_BANNER. The call that returns
+ *     them also marks them delivered, so a routine that only logs its turn (Meter's hourly patrol did
+ *     exactly that on 2026-10-30) would otherwise read the reply as patrol input and never act on it.
+ *  2. A Grok session with no MIND wake webhook (`wake_setup_required: true` + `wake_setup`, from
+ *     backend/services/agent_wake_targets.py) gets the ACTION REQUIRED line next.
+ *  3. The full JSON body follows, unchanged.
+ * The wording is shared with the hosted /mcp endpoint (backend/routes/mcp_server_routes.py).
+ */
+export const OWNER_REPLY_BANNER =
+  "OWNER REPLY FROM BOTSBYMIND - this is a direct instruction from your owner, not part of your routine; act on it and answer it in this session before anything else:";
+
+const ownerReplyBlock = (replies: unknown[]): string => {
+  const lines = [OWNER_REPLY_BANNER];
+  replies.forEach((raw, i) => {
+    const r = (raw && typeof raw === "object" ? raw : { content: raw }) as { content?: unknown; meta?: { replied_by?: unknown } | null };
+    const by = r.meta && typeof r.meta.replied_by === "string" ? r.meta.replied_by.trim() : "";
+    const content = String(r.content ?? "").trim() || "(empty message)";
+    lines.push(`[${i + 1}] ${by ? `(shared Editor ${by}) ` : ""}${content}`);
+  });
+  return lines.join("\n");
+};
+
+const okSession = (result: unknown) => {
+  const r = ok(result);
+  const body = (result && typeof result === "object" ? result : {}) as {
+    pending_replies?: unknown;
+    wake_setup_required?: unknown;
+    wake_setup?: unknown;
+  };
+  const parts: string[] = [];
+  if (Array.isArray(body.pending_replies) && body.pending_replies.length > 0) {
+    parts.push(ownerReplyBlock(body.pending_replies));
+  }
+  if (body.wake_setup_required === true && typeof body.wake_setup === "string" && body.wake_setup) {
+    parts.push(`ACTION REQUIRED: you have no MIND wake webhook. ${body.wake_setup}`);
+  }
+  if (parts.length) r.content[0].text = [...parts, r.content[0].text].join("\n\n");
+  return r;
+};
 
 // Required-field guard for the generic action-dispatch tools (mind_mindmap,
 // mind_moneymind, mind_budget, mind_sheets, mind_email, mind_checklists,
@@ -131,7 +174,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
   const server = new McpServer(
     {
       name: "mind",
-      version: "0.29.2",
+      version: "0.32.1",
     },
     {
       // Returned to every client in the MCP `initialize` response — the first
@@ -148,7 +191,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
     {
       title: "MIND Integration Guide",
       description:
-        "Complete playbook for integrating any AI agent with MIND — the three integration paths (MCP server, Daebot, REST API), authentication, the session protocol, all 45 tools, REST endpoint mapping, and common recipes.",
+        "Complete playbook for integrating any AI agent with MIND — the three integration paths (MCP server, Daebot, REST API), authentication, the session protocol, all 48 tools, REST endpoint mapping, and common recipes.",
       mimeType: "text/markdown",
     },
     async (uri) => ({
@@ -520,7 +563,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_remember",
-    "Store and manage content in your MIND knowledge graph. Use for facts, decisions, learnings, research, notes — anything worth remembering. Auto-categorized. Always log outcomes here after completing tasks. Supports create (default), delete, search, get, and list.\n\n⚠️ PRIVATE vs PUBLIC: `document` and `entry` are PRIVATE to the user's knowledge graph. `feed_post` is a PUBLIC social-media post that appears on the user's public feed for everyone to see. Default to `entry` for all agent outcomes, logs, decisions, and research. NEVER use `feed_post` unless the user explicitly says \"post\", \"share\", \"tweet\", \"feed\", or \"thought to my feed\" — deploy logs, PR notes, work outcomes, and agent activity belong in `entry`, NOT on the public feed.\n\nTitle rule: lessons are titled 'Lesson - Failure - <behavior>' / 'Lesson - Behavior - <behavior>' / 'Lesson - Win - <behavior>'; never put '/' or parentheses in a title, the card is derived from it.\n\nWRITE FOR THE AGENT WHO WILL SEARCH FOR THIS LATER — retrieval quality is decided here, not at query time. State facts in the words someone will later search for. Put the entity name in the first sentence. Inline dates, ids, file paths and numbers rather than saying \"the PR\" or \"yesterday\" — a note that only says \"fixed it\" is unfindable. If this supersedes an earlier note, say so explicitly and name what it replaces, so the older fact can be closed off instead of silently competing with this one.",
+    "Store and manage content in your MIND knowledge graph. Use for facts, decisions, learnings, research, notes — anything worth remembering. Auto-categorized. Always log outcomes here after completing tasks. Supports create (default), delete, search, get, and list.\n\n⚠️ PRIVATE vs PUBLIC: `document` and `entry` are PRIVATE to the user's knowledge graph. `feed_post` is a PUBLIC social-media post that appears on the user's public feed for everyone to see. Default to `entry` for all agent outcomes, logs, decisions, and research. NEVER use `feed_post` unless the user explicitly says \"post\", \"share\", \"tweet\", \"feed\", or \"thought to my feed\" — deploy logs, PR notes, work outcomes, and agent activity belong in `entry`, NOT on the public feed.\n\nTitle rule: titles are plain natural language, written as a person would name the thing. No type prefixes (\"Journal Entry\", \"Agent Entry\", \"Document\"), no ids or hashes, no ISO timestamps; never put '/' or parentheses in a title, the card is derived from it. Lessons keep the 'Lesson - Failure - <behavior>' / 'Lesson - Behavior - <behavior>' / 'Lesson - Win - <behavior>' shape exactly as written (MIND never rewrites a lesson title) and files them under Lessons.\n\nFILING: every write is filed, nothing lands loose. Pass `folder` (a folder id, a folder name, or a 'Parent/Child' path) when you know where it belongs; otherwise leave it out and MIND files it by what it is (agent entries, automation logs, lessons, mistakes, decisions, documents). An explicit folder always wins; a secure folder is refused. One living document per entity: when a person, project, focus, calendar event or recurring job already has a record, update that record (mind_crm, mind_life, mind_focuses) or supersede the earlier note with `supersedes`; do not write a new entry that restates it.\n\nWRITE FOR THE AGENT WHO WILL SEARCH FOR THIS LATER — retrieval quality is decided here, not at query time. State facts in the words someone will later search for. Put the entity name in the first sentence. Inline dates, ids, file paths and numbers rather than saying \"the PR\" or \"yesterday\" — a note that only says \"fixed it\" is unfindable. If this supersedes an earlier note, say so explicitly and name what it replaces, so the older fact can be closed off instead of silently competing with this one.",
     {
       action: z
         .enum(["create", "delete", "search", "get", "list"])
@@ -538,7 +581,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
       title: z
         .string()
         .optional()
-        .describe("Title for documents and entries (auto-generated if omitted for feed posts)"),
+        .describe("Title for documents and entries: plain natural language, no type prefixes, no ids (auto-generated if omitted for feed posts)"),
       tags: z
         .array(z.string())
         .optional()
@@ -564,15 +607,21 @@ export function createMindMcpServer(client: MindClient): McpServer {
         .number()
         .optional()
         .describe("Max items to return for list/search"),
+      folder: z
+        .string()
+        .optional()
+        .describe(
+          "Where to file this write: a folder id, a folder name, or a 'Parent/Child' path (mind_folders list shows them). Optional: omit it and MIND files the write by what it is. An explicit folder always wins; a secure folder is refused. Applies to documents and entries."
+        ),
       supersedes: z
         .array(z.string())
         .max(10)
         .optional()
         .describe(
-          "Entries only: earlier records of yours this entry replaces, by id, exact title, or the exact reference title retrieval shows (e.g. \"Journal Entry: <title>\"). They are tagged superseded, never deleted, and stop being retrieved once the server enables it. Use it whenever you record a fix, reversal or newer version, so MIND stops serving the old fact."
+          "Entries only: earlier records of yours this entry replaces, by id, exact title, or the exact reference title retrieval shows (e.g. \"Agent Entry: <title>\"; older entries show \"Journal Entry: <title>\"). They are tagged superseded, never deleted, and stop being retrieved once the server enables it. Use it whenever you record a fix, reversal or newer version, so MIND stops serving the old fact."
         ),
     },
-    async ({ action, content, type, title, tags, source, item_id, query, page, limit, supersedes }) => {
+    async ({ action, content, type, title, tags, source, folder, item_id, query, page, limit, supersedes }) => {
       try {
         switch (action) {
           case "create": {
@@ -592,6 +641,8 @@ export function createMindMcpServer(client: MindClient): McpServer {
                   title: title ?? `Agent Document — ${new Date().toISOString().slice(0, 10)}`,
                   content,
                   source: source ?? "mcp-agent",
+                  ...(tags && tags.length ? { tags } : {}),
+                  ...(folder ? { folder } : {}),
                 });
                 storedAs = "document";
                 break;
@@ -608,6 +659,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
                   title,
                   content,
                   tags,
+                  ...(folder ? { folder } : {}),
                   ...(supersedes && supersedes.length ? { supersedes } : {}),
                 });
                 storedAs = "entry";
@@ -742,7 +794,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_folders",
-    "Organize your MIND documents into folders. Folders are a presentation layer — the knowledge graph still indexes and retrieves across every document regardless of folder. Use mind_remember to create a document, then mind_folders move_documents to file it. Actions: list, create, rename, move, delete, move_documents, set_hint, secure, unsecure, unlock, reset_request, reset (Secure Folders — password-gate a folder).",
+    "Organize your MIND documents into folders. Folders are a presentation layer — the knowledge graph still indexes and retrieves across every document regardless of folder. Every write is already filed by MIND, so you rarely need to move anything: pass `folder` to mind_remember when you know where it belongs, and use move_documents to correct a filing. Actions: list, create, rename, move, delete, move_documents, set_hint, secure, unsecure, unlock, reset_request, reset (Secure Folders — password-gate a folder), link_repo, pull_repo, push_repo, repo_status (Repo Folders — two-way GitHub sync for a folder).",
     {
       action: z
         .enum([
@@ -758,16 +810,25 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "unlock",
           "reset_request",
           "reset",
+          "link_repo",
+          "pull_repo",
+          "push_repo",
+          "repo_status",
         ])
         .describe(
-          "list (all folders + counts + routing hints + secure/locked flags), create (new folder; pass routing_hint to enable agent-routing), rename (change a folder's name), move (re-nest a folder), delete (remove a folder — its documents and subfolders move up a level, nothing is deleted), move_documents (file documents into a folder), set_hint (write/clear the routing_hint that mind_folder_suggest reads), secure (password-gate folder_id — pass passphrase; changing an existing passphrase needs an active unlock first), unsecure (turn off secure mode — needs an active unlock), unlock (verify passphrase, mints a 15-minute unlock kept in memory for this session and sent on every later call), reset_request (email a one-time reset link to the account email), reset (complete a reset — pass token + new_passphrase)",
+          "list (all folders + counts + routing hints + secure/locked flags), create (new folder; pass routing_hint to enable agent-routing), rename (change a folder's name), move (re-nest a folder), delete (remove a folder — its documents and subfolders move up a level, nothing is deleted), move_documents (file documents into a folder), set_hint (write/clear the routing_hint that mind_folder_suggest reads), secure (password-gate folder_id — pass passphrase; changing an existing passphrase needs an active unlock first), unsecure (turn off secure mode — needs an active unlock), unlock (verify passphrase, mints a 15-minute unlock kept in memory for this session and sent on every later call), reset_request (email a one-time reset link to the account email), reset (complete a reset — pass token + new_passphrase), link_repo (link folder_id to a GitHub repo — pass owner + name, optional branch; converts the folder to a repo folder), pull_repo (start a background pull of the linked repo into the folder and return a job_id; pass job_id to poll it), push_repo (commit changed/new documents back to the linked branch — pass message, optional paths; never force-pushes, a 409 means pull first), repo_status (linked repo, head sha, last pulled/pushed, and which documents changed since). Repo actions need GitHub connected under Integrations.",
         ),
-      name: z.string().optional().describe("Folder name — required for create and rename"),
+      name: z.string().optional().describe("Folder name — required for create and rename. For link_repo, the GitHub repository name (with owner)."),
+      owner: z.string().optional().describe("GitHub owner (user or org) — required for link_repo"),
+      branch: z.string().optional().describe("Branch to sync — optional for link_repo (defaults to the repo's default branch)"),
+      message: z.string().optional().describe("Commit message — required for push_repo"),
+      paths: z.array(z.string()).optional().describe("Repo-relative paths to push — optional for push_repo (omit to push every changed/new document under the folder)"),
+      job_id: z.string().optional().describe("Pull job id returned by pull_repo — pass it to pull_repo to poll the job's status"),
       folder_id: z
         .string()
         .optional()
         .describe(
-          "Folder id — the folder to rename/move/delete/set_hint/secure/unsecure/unlock/reset_request/reset, or the destination for move_documents (omit or pass 'root' to file documents at the top level)",
+          "Folder id — the folder to rename/move/delete/set_hint/secure/unsecure/unlock/reset_request/reset/link_repo/pull_repo/push_repo/repo_status, or the destination for move_documents (omit or pass 'root' to file documents at the top level)",
         ),
       parent_id: z
         .string()
@@ -802,7 +863,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "Pass the exact `unlock_token` string returned by a prior 'unlock' call here to carry a 15-minute unlock into a later 'secure' (passphrase change) or 'unsecure' call. Not needed for the first time a folder is secured, and not used by list/create/rename/move/delete/move_documents/set_hint/unlock/reset_request/reset. This stdio server keeps unlock tokens in memory for the whole session and normally attaches them automatically (see 'unlock'), so passing this explicitly is usually redundant — but when supplied it takes precedence over the remembered token, so the same request shape works on both this server and the hosted MCP.",
         ),
     },
-    async ({ action, name, folder_id, parent_id, doc_ids, routing_hint, passphrase, new_passphrase, token, unlock_token }) => {
+    async ({ action, name, owner, branch, message, paths, job_id, folder_id, parent_id, doc_ids, routing_hint, passphrase, new_passphrase, token, unlock_token }) => {
       try {
         switch (action) {
           case "list": {
@@ -970,6 +1031,28 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 { type: "text" as const, text: `Passphrase reset for folder ${res.folder_id}. Unlock it with the new passphrase.` },
               ],
             };
+          }
+          case "link_repo": {
+            if (!folder_id) throw new Error("'folder_id' is required to link a repo");
+            if (!owner || !name) throw new Error("'owner' and 'name' (the GitHub owner and repo name) are required to link a repo");
+            const res = await client.linkRepoFolder(folder_id, owner, name, branch);
+            return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
+          }
+          case "pull_repo": {
+            if (!folder_id) throw new Error("'folder_id' is required to pull a repo");
+            const res = await client.pullRepoFolder(folder_id, job_id);
+            return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
+          }
+          case "push_repo": {
+            if (!folder_id) throw new Error("'folder_id' is required to push a repo");
+            if (!message) throw new Error("'message' (the commit message) is required to push a repo");
+            const res = await client.pushRepoFolder(folder_id, message, paths);
+            return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
+          }
+          case "repo_status": {
+            if (!folder_id) throw new Error("'folder_id' is required for repo_status");
+            const res = await client.repoFolderStatus(folder_id);
+            return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
           }
           default:
             throw new Error(`Unknown action: ${action}`);
@@ -1240,7 +1323,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_life",
-    "Manage Focus → Project → Outcome hierarchy + calendar in MIND Life. Items are either projects (top-level domain/client buckets that live inside a Focus) or outcomes (deliverables that live under a parent project). Use `item_type` + `parent_id` + `focus_id` on create/update to wire the hierarchy. Use list filters (item_type, parent_id, focus_id, top_level_only) to slice the board. Share a project with another MIND account using share/list_shares/revoke_share (requires LIFE_SHARING_ENABLED on the backend; grantee gets the project + its outcomes on their board).",
+    "Manage Focus → Project → Outcome hierarchy + calendar in MIND Life. (Focus = Workspace: a Focus is now called a Workspace — see mind_workspaces / mind_projects / mind_todos for the Workspace → Project → To-do view that syncs with the Astra AI client portal.) Items are either projects (top-level domain/client buckets that live inside a Focus) or outcomes (deliverables that live under a parent project). Use `item_type` + `parent_id` + `focus_id` on create/update to wire the hierarchy. Use list filters (item_type, parent_id, focus_id, top_level_only) to slice the board. Share a project with another MIND account using share/list_shares/revoke_share (requires LIFE_SHARING_ENABLED on the backend; grantee gets the project + its outcomes on their board).",
     {
       action: z
         .enum([
@@ -1647,7 +1730,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
 
   server.tool(
     "mind_focuses",
-    "Manage Focuses — the top-level buckets that group Life Projects. Every project lives inside one focus (or 'No Focus'). Use list to see all focuses + their project counts, create to add a new bucket (e.g. 'Astra', 'Atlas', 'Fundraising'), update/delete to maintain them. Pass the returned focus_id to mind_life when creating projects.",
+    "Manage Focuses — the top-level buckets that group Life Projects. Focus = Workspace (alias): each Focus is also a Workspace, and mind_workspaces is the preferred tool for new work. Every project lives inside one focus (or 'No Focus'). Use list to see all focuses + their project counts, create to add a new bucket (e.g. 'Astra', 'Atlas', 'Fundraising'), update/delete to maintain them. Pass the returned focus_id to mind_life when creating projects.",
     {
       action: z
         .enum(["list", "get", "create", "update", "delete"])
@@ -1965,6 +2048,226 @@ export function createMindMcpServer(client: MindClient): McpServer {
           content: [{ type: "text" as const, text: `mind_tasks error: ${err instanceof Error ? err.message : String(err)}` }],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ─── mind_workspaces / mind_projects / mind_todos ───────
+  // LIFE v2: Workspaces → Projects → To-dos (a Focus is now a Workspace).
+  // MIND owns the data; the Astra AI client portal reads/writes through the
+  // same /developer/v1 routes, so edits made here show up there.
+
+  const lifeText = (data: unknown) => ({
+    content: [{ type: "text" as const, text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+  });
+  const lifeErr = (tool: string, err: unknown) => ({
+    content: [{ type: "text" as const, text: `${tool} error: ${err instanceof Error ? err.message : String(err)}` }],
+    isError: true,
+  });
+  const lifeNeed = (tool: string, field: string, action: string) => ({
+    content: [{ type: "text" as const, text: `${tool}: '${field}' is required for action '${action}'.` }],
+    isError: true,
+  });
+  const lifeBody = (args: Record<string, unknown>, drop: string[]) => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (drop.includes(k) || v === undefined || v === null) continue;
+      out[k] = v;
+    }
+    return out;
+  };
+
+  server.tool(
+    "mind_workspaces",
+    "Manage Workspaces — the top-level containers in LIFE (Workspace → Project → To-do). A Workspace is what used to be called a Focus (mind_focuses stays as an alias); a Workspace can also be shared with teammates or a client, and it is the unit the Astra AI client portal syncs with. Use list to see the workspaces you belong to, create/update/delete to maintain them (delete soft-archives), and members/add_member/remove_member to control who can see it (add_member needs the person's MIND username). Pass the returned workspace_id to mind_projects and mind_todos. Reach for mind_projects for the projects inside a workspace and mind_todos for the to-dos inside a project.",
+    {
+      action: z
+        .enum(["list", "get", "create", "update", "delete", "members", "add_member", "remove_member"])
+        .describe("list/get/create/update/delete workspaces (delete = soft archive), members (list who has access), add_member / remove_member (share or unshare)"),
+      workspace_id: z.string().optional().describe("Workspace id — required for every action except list and create"),
+      name: z.string().optional().describe("Display name — required for create"),
+      description: z.string().optional().describe("Long-form description"),
+      color: z.string().optional().describe("Color stripe (default, red, orange, yellow, green, blue, purple, pink)"),
+      icon: z.string().optional().describe("Lucide icon name, e.g. 'briefcase'"),
+      kind: z.string().optional().describe("Workspace kind: team (default) or personal"),
+      username: z.string().optional().describe("MIND username to add (add_member)"),
+      role: z.string().optional().describe("Member role for add_member: member (default), admin, viewer"),
+      member_id: z.string().optional().describe("Member id or username to remove (remove_member)"),
+      include_archived: z.boolean().optional().describe("On list — true to include archived workspaces"),
+    },
+    async (a) => {
+      try {
+        const need = (f: keyof typeof a & string) => (a[f] ? null : lifeNeed("mind_workspaces", f, a.action));
+        switch (a.action) {
+          case "list":
+            return lifeText(await client.listWorkspaces({ include_archived: a.include_archived }));
+          case "create":
+            return need("name") ?? lifeText(await client.createWorkspace(lifeBody(a, ["action", "workspace_id", "username", "role", "member_id", "include_archived"])));
+          case "get":
+            return need("workspace_id") ?? lifeText(await client.getWorkspace(a.workspace_id!));
+          case "update":
+            return need("workspace_id") ?? lifeText(await client.updateWorkspace(a.workspace_id!, lifeBody(a, ["action", "workspace_id", "username", "role", "member_id", "include_archived"])));
+          case "delete":
+            return need("workspace_id") ?? lifeText(await client.deleteWorkspace(a.workspace_id!));
+          case "members":
+            return need("workspace_id") ?? lifeText(await client.listWorkspaceMembers(a.workspace_id!));
+          case "add_member":
+            return need("workspace_id") ?? need("username") ?? lifeText(await client.addWorkspaceMember(a.workspace_id!, lifeBody({ username: a.username, role: a.role }, [])));
+          case "remove_member": {
+            const mid = a.member_id ?? a.username;
+            if (!a.workspace_id) return lifeNeed("mind_workspaces", "workspace_id", a.action);
+            if (!mid) return lifeNeed("mind_workspaces", "member_id", a.action);
+            return lifeText(await client.removeWorkspaceMember(a.workspace_id, mid));
+          }
+          default:
+            return lifeErr("mind_workspaces", `Unknown action: ${a.action}`);
+        }
+      } catch (err) {
+        return lifeErr("mind_workspaces", err);
+      }
+    }
+  );
+
+  server.tool(
+    "mind_projects",
+    "Manage Projects inside a Workspace (Workspace → Project → To-do). Use list with a workspace_id to see its projects, create to add one, update/set_status to change it, progress to get the to-do rollup (total/open/in_progress/blocked/done/waiting_on_reply/percent). portal_status is the client-facing stage (requested, scoped, in_progress, in_review, feedback, complete, on_hold, declined) and mirrors what the client sees in the Astra AI portal; set_status changes only that. delete removes the project. Reach for mind_todos to add or work the to-dos in a project; mind_life still works for the older Focus/Outcome hierarchy.",
+    {
+      action: z
+        .enum(["list", "get", "create", "update", "delete", "progress", "set_status"])
+        .describe("list (needs workspace_id) / get / create / update / delete a project, progress (to-do rollup), set_status (change portal_status)"),
+      workspace_id: z.string().optional().describe("Workspace id — required for list and create"),
+      project_id: z.string().optional().describe("Project id — required for get/update/delete/progress/set_status"),
+      title: z.string().optional().describe("Project title — required for create"),
+      description: z.string().optional().describe("Project description"),
+      portal_status: z
+        .enum(["requested", "scoped", "in_progress", "in_review", "feedback", "complete", "on_hold", "declined"])
+        .optional()
+        .describe("Client-facing stage; required for set_status"),
+      progress: z.number().int().min(0).max(100).optional().describe("Override progress percent (0-100); omit to compute from done to-dos / total"),
+      status: z.string().optional().describe("LIFE status (action, someday, waiting, completed) — on list it filters"),
+      priority: z.string().optional().describe("Priority: low, medium, high, urgent"),
+      due_date: z.string().optional().describe("Due date YYYY-MM-DD"),
+      target_date: z.string().optional().describe("Target completion date YYYY-MM-DD"),
+      color: z.string().optional().describe("Color stripe"),
+      tags: z.array(z.string()).optional().describe("Free-form tags; on update REPLACES the list"),
+    },
+    async (a) => {
+      try {
+        const need = (f: keyof typeof a & string) => (a[f] ? null : lifeNeed("mind_projects", f, a.action));
+        switch (a.action) {
+          case "list":
+            return need("workspace_id") ?? lifeText(await client.listWorkspaceProjects(a.workspace_id!, { status: a.status }));
+          case "get":
+            return need("project_id") ?? lifeText(await client.getLifeItem(a.project_id!));
+          case "create":
+            return need("workspace_id") ?? need("title") ?? lifeText(await client.createLifeItem({
+              ...lifeBody(a, ["action", "project_id"]),
+              item_type: "project",
+            } as any));
+          case "update":
+            return need("project_id") ?? lifeText(await client.updateLifeItem(a.project_id!, lifeBody(a, ["action", "project_id", "workspace_id"]) as any));
+          case "set_status":
+            return need("project_id") ?? need("portal_status") ?? lifeText(await client.updateLifeItem(a.project_id!, { portal_status: a.portal_status } as any));
+          case "delete":
+            return need("project_id") ?? lifeText((await client.deleteLifeItem(a.project_id!)) ?? { deleted: true, project_id: a.project_id });
+          case "progress":
+            return need("project_id") ?? lifeText(await client.getProjectProgress(a.project_id!));
+          default:
+            return lifeErr("mind_projects", `Unknown action: ${a.action}`);
+        }
+      } catch (err) {
+        return lifeErr("mind_projects", err);
+      }
+    }
+  );
+
+  server.tool(
+    "mind_todos",
+    "Work the To-dos inside a Project (Workspace → Project → To-do). Use this, not mind_tasks, for to-dos that belong to a project and may be shown to a client in the Astra AI portal. Create with project_id + title; move them with start/complete/reopen; put one on the calendar with schedule (unschedule removes it). Each to-do has a thread: comment adds a note, ask posts a question that needs the client's/owner's answer, decide posts a decision with options, reply answers a question or decision (pass comment_id; resolution/choice marks it resolved), thread reads it all. waiting lists to-dos blocked on a reply, progress gives a project's rollup, search finds to-dos by text in title/notes/comments. An empty list means none match the filter.",
+    {
+      action: z
+        .enum(["list", "search", "get", "create", "update", "delete", "start", "complete", "reopen", "schedule", "unschedule", "comment", "ask", "decide", "reply", "thread", "progress", "waiting"])
+        .describe("list/search/get/create/update/delete to-dos; start/complete/reopen change state; schedule/unschedule put it on the calendar; comment/ask/decide/reply/thread work the to-do thread; progress (project rollup) and waiting (to-dos waiting on a reply)"),
+      todo_id: z.string().optional().describe("To-do id — required for get/update/delete/start/complete/reopen/schedule/unschedule/comment/ask/decide/reply/thread"),
+      project_id: z.string().optional().describe("Project id — required for create and progress; filters list"),
+      workspace_id: z.string().optional().describe("Workspace id — filters list/search/waiting"),
+      title: z.string().optional().describe("To-do title — required for create"),
+      description: z.string().optional().describe("To-do description"),
+      notes: z.string().optional().describe("Working notes on the to-do"),
+      status: z.string().optional().describe("Filter (list) or new status: open, in_progress, blocked, done"),
+      priority: z.string().optional().describe("Priority: none, low, medium, high, urgent"),
+      due_date: z.string().optional().describe("Due date YYYY-MM-DD"),
+      assignee: z.string().optional().describe("Filter list by assignee (username, agent slug or email)"),
+      assignee_type: z.string().optional().describe("On create/update: user, agent, external, unassigned"),
+      assignee_id: z.string().optional().describe("On create/update: username, agent slug, or email"),
+      due_before: z.string().optional().describe("List only to-dos due before this date YYYY-MM-DD"),
+      waiting: z.boolean().optional().describe("List only to-dos waiting on a reply"),
+      q: z.string().optional().describe("Search text (required for search; also filters list)"),
+      spec: z.record(z.string(), z.unknown()).optional().describe("Free-form spec object stored on the to-do"),
+      external_ref: z.record(z.string(), z.unknown()).optional().describe("Link to an outside system, e.g. {system:'astra_portal', id:'...'}"),
+      start: z.string().optional().describe("schedule: start time (ISO 8601)"),
+      end: z.string().optional().describe("schedule: end time (ISO 8601)"),
+      date: z.string().optional().describe("schedule: date YYYY-MM-DD (with all_day)"),
+      all_day: z.boolean().optional().describe("schedule: all-day event"),
+      body: z.string().optional().describe("Text for comment/ask/decide/reply"),
+      options: z.array(z.string()).optional().describe("decide: the choices to offer"),
+      comment_id: z.string().optional().describe("reply: id of the question/decision comment being answered"),
+      resolution: z.string().optional().describe("reply: resolution text; marks the question resolved"),
+      choice: z.string().optional().describe("reply: the chosen option for a decision"),
+    },
+    async (a) => {
+      try {
+        const need = (f: keyof typeof a & string) => (a[f] ? null : lifeNeed("mind_todos", f, a.action));
+        const id = a.todo_id as string;
+        switch (a.action) {
+          case "list":
+            return lifeText(await client.listTodos({
+              workspace_id: a.workspace_id, project_id: a.project_id, status: a.status, q: a.q,
+              assignee: a.assignee, due_before: a.due_before, waiting: a.waiting,
+            }));
+          case "waiting":
+            return lifeText(await client.listTodos({ workspace_id: a.workspace_id, project_id: a.project_id, waiting: true }));
+          case "search":
+            return need("q") ?? lifeText(await client.searchTodos(a.q!, { workspace_id: a.workspace_id, project_id: a.project_id }));
+          case "get":
+            return need("todo_id") ?? lifeText(await client.getTodo(id));
+          case "create":
+            return need("project_id") ?? need("title") ?? lifeText(await client.createTodo(lifeBody(a, [
+              "action", "todo_id", "workspace_id", "assignee", "due_before", "waiting", "q", "start", "end", "date", "all_day",
+              "body", "options", "comment_id", "resolution", "choice",
+            ])));
+          case "update":
+            return need("todo_id") ?? lifeText(await client.updateTodo(id, lifeBody(a, [
+              "action", "todo_id", "workspace_id", "project_id", "assignee", "due_before", "waiting", "q", "start", "end", "date", "all_day",
+              "body", "options", "comment_id", "resolution", "choice",
+            ])));
+          case "delete":
+            return need("todo_id") ?? lifeText((await client.deleteTodo(id)) ?? { deleted: true, todo_id: id });
+          case "start":
+          case "complete":
+          case "reopen":
+            return need("todo_id") ?? lifeText(await client.todoTransition(id, a.action, a.action === "complete" && a.notes ? { note: a.notes } : {}));
+          case "schedule":
+            return need("todo_id") ?? lifeText(await client.scheduleTodo(id, lifeBody({ start: a.start, end: a.end, date: a.date, all_day: a.all_day }, [])));
+          case "unschedule":
+            return need("todo_id") ?? lifeText((await client.unscheduleTodo(id)) ?? { unscheduled: true, todo_id: id });
+          case "thread":
+            return need("todo_id") ?? lifeText(await client.listTodoComments(id));
+          case "comment":
+            return need("todo_id") ?? need("body") ?? lifeText(await client.addTodoComment(id, { kind: "comment", body: a.body }));
+          case "ask":
+            return need("todo_id") ?? need("body") ?? lifeText(await client.addTodoComment(id, { kind: "question", body: a.body, needs_reply: true }));
+          case "decide":
+            return need("todo_id") ?? need("body") ?? lifeText(await client.addTodoComment(id, { kind: "decision", body: a.body, options: a.options ?? [], needs_reply: true }));
+          case "reply":
+            return need("todo_id") ?? need("comment_id") ?? need("body") ?? lifeText(await client.replyTodoComment(id, a.comment_id!, lifeBody({ body: a.body, resolution: a.resolution, choice: a.choice }, [])));
+          case "progress":
+            return need("project_id") ?? lifeText(await client.getProjectProgress(a.project_id!));
+          default:
+            return lifeErr("mind_todos", `Unknown action: ${a.action}`);
+        }
+      } catch (err) {
+        return lifeErr("mind_todos", err);
       }
     }
   );
@@ -3644,8 +3947,9 @@ export function createMindMcpServer(client: MindClient): McpServer {
       "7) AGENT FILE — if you are a named, standing agent (not a bare runtime), keep your agent file current with action=agent_doc_update (editor=\"agent\", with a `note`) whenever your role, rules or standing work change; read it anytime with action=agent_doc_get. " +
       "8) RESUME ANYWHERE — when the user says \"run my <Agent> session\" / \"be <Agent>\" / \"resume <Agent>\", call action=resume with agent=<Agent> and adopt its `resume_prompt` verbatim as your operating brief for the rest of the turn — it already carries your agent file, attached context, where you left off, and any pending replies.\n" +
       "9) HEARTBEAT — every 15 minutes from YOUR OWN scheduler (MIND cannot wake you): action=heartbeat with source_key, agent, runtime (+ optional unsynced turns). Returns pending_replies across your open sessions, oldest first (session_id, reply_id, content, created_at), plus next_beat_seconds. Answer each in your own app, then append both sides; the append marks it delivered, a heartbeat never does. Install once: a recurring routine named \"MIND sync heartbeat\" whose body is the MCP prompt mind-sync-heartbeat. MINDbots shows \"Sync stale\" after 20 minutes of silence.\n" +
+      "10) " + AGENT_SESSION_REPLIES_RULE + "\n" +
       "Never claim a session is synced without the session_id MIND returned. Never log secrets or raw tool payloads.\n\n" +
-      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), heartbeat (the 15-minute sync beat), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project), agent_doc_get (read a standing agent's file — its role/rules/tools/standing-work doc, identified by `agent_key`; returns a starter template when none exists yet), agent_doc_update (save a new version of that file; `editor` is \"user\" or \"agent\" — \"agent\" requires a `note` saying what changed and why; a stale `base_version` 409s with the current doc instead of clobbering a concurrent edit), attach (replace the full list of Life projects/focuses/workspaces/repos an agent is connected to, by `agent_key` and `attachments`), mentions (read/mark-delivered this key's pending @mentions), group_create, group_list, group_get, group_post, group_inbox, group_delete (see GROUP CHATS / @ MENTIONS below), resume (pick up a named agent — `agent` — wherever it last left off: its agent file, attached context with live summaries, the previous session's tail/summary, any pending replies, and a ready-to-adopt `resume_prompt`; also opens a fresh continuation session for you to keep working in).\n\n" +
+      "Actions: open, append, close, list, get, reply (alias for append of one assistant message), heartbeat (the 15-minute sync beat), wake_target_set (agent, url, secret, runtime default \"grok\": register a Grok Bot \"MIND wake\" webhook routine so MIND POSTs it the moment your owner replies; the secret is sent as `Authorization: Bearer` and is never echoed back), wake_targets (list registered wake targets, masked), wake_target_clear (agent, runtime: remove one), inbox (undelivered mind-origin replies), handoff, sources (source_action=list|create|update|delete manages the MIND Chat sidebar toggles — auto-created on first open with an unknown source_key), share (grant another MIND account viewer or replier access — owner only), list_shares (owner only), revoke_share (owner only), activity (Agent Activity Map: which agents worked on which Life projects over `days`, with sessions, turns, tool calls, active minutes and Anthony's replies per project, plus sessions that still need a project), set_project (assign a session to a Life project by `project_id`, or clear it with project_id omitted; `learn` (default true) makes the session's working folder or repo route future sessions to the same project), agent_doc_get (read a standing agent's file — its role/rules/tools/standing-work doc, identified by `agent_key`; returns a starter template when none exists yet), agent_doc_update (save a new version of that file; `editor` is \"user\" or \"agent\" — \"agent\" requires a `note` saying what changed and why; a stale `base_version` 409s with the current doc instead of clobbering a concurrent edit), attach (replace the full list of Life projects/focuses/workspaces/repos an agent is connected to, by `agent_key` and `attachments`), mentions (read/mark-delivered this key's pending @mentions), group_create, group_list, group_get, group_post, group_inbox, group_delete (see GROUP CHATS / @ MENTIONS below), resume (pick up a named agent — `agent` — wherever it last left off: its agent file, attached context with live summaries, the previous session's tail/summary, any pending replies, and a ready-to-adopt `resume_prompt`; also opens a fresh continuation session for you to keep working in).\n\n" +
       "GROUP CHATS — group_create (title, participant_keys: 2-20 source keys) opens a group thread; group_post (group_id, author_key, content) appends a message and delivers it into every OTHER participant's durable @mention inbox (see action=mentions) — group membership is an implicit mention of everyone else in the room; group_get (group_id) reads the full thread; group_list lists your groups; group_inbox (group_id, as_key) is a group-scoped view of the same inbox action=mentions reads; group_delete removes a group and its thread. " +
       "@ MENTIONS — writing \"@<source_key>\" inside ANY posted content (a 1:1 session's append/reply, or a group_post) durably queues a pending mention for that key, independent of whether it has an open session right now or lives in a different chat/group entirely. action=mentions (as_key) returns and marks delivered every pending mention of that key — poll it the same way you poll action=inbox.",
     {
@@ -3677,13 +3981,16 @@ export function createMindMcpServer(client: MindClient): McpServer {
           "group_inbox",
           "group_delete",
           "wake_target",
+          "wake_target_set",
+          "wake_targets",
+          "wake_target_clear",
           "heartbeat",
         ])
         .describe("Which agent-session operation to perform."),
       // open
       source_key: z.string().optional().describe("Your assigned MIND Chat sidebar toggle slug, e.g. \"claude-code-1\" — required for open; also filters list; also required for sources action=create (as the new source's key)."),
       external_session_id: z.string().optional().describe("Your runtime's own session id — required for open. Idempotent: opening the same (source_key, external_session_id) again resumes the existing session instead of creating a new one."),
-      runtime: z.string().optional().describe("Runtime name, e.g. \"claude-code\", \"codex\", \"cursor\", \"openclaw\", \"grok\", \"n8n\", \"custom\" — open (used if the source is auto-created); sources action=create/update."),
+      runtime: z.string().optional().describe("Runtime name, e.g. \"claude-code\", \"codex\", \"cursor\", \"openclaw\", \"grok\", \"n8n\", \"custom\" — open (used if the source is auto-created); sources action=create/update; wake_target_set / wake_target_clear (default \"grok\")."),
       source_label: z.string().optional().describe("Human-readable label for an auto-created source on open, e.g. \"Claude Code 1\" — defaults to the titlecased source_key if omitted."),
       title: z.string().optional().describe("Session title (first user ask, 6-10 words) — open (initial) or append (updates it)."),
       machine: z.string().optional().describe("Machine identifier — open."),
@@ -3744,8 +4051,8 @@ export function createMindMcpServer(client: MindClient): McpServer {
       force: z.boolean().optional().describe("sources action=delete: also delete the source's sessions instead of failing 409 when sessions exist."),
       // wake_target (Grok Bot webhook routine push)
       wake_action: z.enum(["set", "list", "clear"]).optional().describe("Sub-action for action=wake_target (default set): set registers this bot's webhook-routine URL, list shows registered bots (masked), clear removes one."),
-      url: z.string().optional().describe("wake_target set: the https URL of this bot's webhook routine. Owner-private, never echoed back."),
-      secret: z.string().optional().describe("wake_target set: the webhook routine's API key; MIND sends it as 'Authorization: Bearer <secret>'. Owner-private, never echoed back."),
+      url: z.string().optional().describe("wake_target_set (or wake_target set): the https URL of this bot's \"MIND wake\" webhook routine. Owner-private, never echoed back."),
+      secret: z.string().optional().describe("wake_target_set (or wake_target set): the webhook routine's API key; MIND sends it as 'Authorization: Bearer <secret>' and never in the body. Owner-private, never echoed back."),
       // share / list_shares / revoke_share
       grantee_username: z.string().optional().describe("MIND username to share with — required for share."),
       role: z.enum(["viewer", "replier"]).optional().describe("Role to grant — share (default \"viewer\"). \"replier\" additionally allows the grantee to reply, which reaches you via wake_url."),
@@ -3784,7 +4091,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
             const { source_key, external_session_id } = args;
             if (!source_key) return err("Error: 'source_key' is required for open.");
             if (!external_session_id) return err("Error: 'external_session_id' is required for open.");
-            return ok(
+            return okSession(
               await client.openAgentSession({
                 source_key,
                 external_session_id,
@@ -3820,7 +4127,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
             if (!session_id) return err("Error: 'session_id' is required for append.");
             if (!messages?.length) return err("Error: 'messages' (at least one) is required for append.");
             const { device, platform, env } = args;
-            return ok(
+            return okSession(
               device || platform || env
                 ? await client.appendAgentSession(session_id, messages, args.title, { device, platform, env })
                 : await client.appendAgentSession(session_id, messages, args.title)
@@ -3831,7 +4138,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
             const { session_id, content } = args;
             if (!session_id) return err("Error: 'session_id' is required for reply.");
             if (!content) return err("Error: 'content' is required for reply.");
-            return ok(
+            return okSession(
               await client.appendAgentSession(session_id, [{ role: "assistant", content }])
             );
           }
@@ -3885,7 +4192,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
           case "inbox": {
             const { session_id } = args;
             if (!session_id) return err("Error: 'session_id' is required for inbox.");
-            return ok(await client.agentSessionInbox(session_id));
+            return okSession(await client.agentSessionInbox(session_id));
           }
 
           case "handoff": {
@@ -3942,6 +4249,22 @@ export function createMindMcpServer(client: MindClient): McpServer {
                 return err(`Unknown source_action: ${_exhaustive}`);
               }
             }
+          }
+
+          // Flat aliases for the three wake_target sub-actions (additive; the
+          // wake_target + wake_action form below keeps working). The secret is
+          // owner-private: the backend never returns it, so neither do we.
+          case "wake_targets":
+            return ok(await client.listAgentWakeTargets());
+
+          case "wake_target_set":
+          case "wake_target_clear": {
+            if (!args.agent) return err(`Error: 'agent' is required for ${action}.`);
+            const wakeAgent = typeof args.agent === "string" ? args.agent : args.agent.label ?? args.agent.key;
+            if (!wakeAgent) return err(`Error: 'agent' must be a bot name for ${action}.`);
+            if (action === "wake_target_clear") return ok(await client.clearAgentWakeTarget(wakeAgent, args.runtime ?? "grok"));
+            if (!args.url) return err("Error: 'url' (the webhook routine URL) is required for wake_target_set.");
+            return ok(await client.setAgentWakeTarget({ agent: wakeAgent, url: args.url, secret: args.secret, runtime: args.runtime ?? "grok" }));
           }
 
           case "wake_target": {
@@ -7051,7 +7374,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
   // ─── mind_sign ──────────────────────────────────────────
   server.tool(
     "mind_sign",
-    "MIND Sign — e-signature envelopes at m-i-n-d.ai/#/mindsign. Actions: list, get, create (JSON variant — document by pdf_url or pdf_base64), setup, fields, send (⚠️ OUTWARD — emails every signer; confirm with the user before calling), resend (⚠️ OUTWARD — re-emails one signer; confirm with the user before calling), void, delete, audit, certificate, download_url (returns a download link string, no binary transferred through MCP).",
+    "MIND Sign — e-signature envelopes at m-i-n-d.ai/#/mindsign. Actions: list, get, create (JSON variant — document by pdf_url or pdf_base64; pass identity_verification: true to require a camera photo + recorded spoken statement from every signer), setup, fields, send (⚠️ OUTWARD — emails every signer; confirm with the user before calling), resend (⚠️ OUTWARD — re-emails one signer; confirm with the user before calling), void, delete, audit, certificate, download_url (returns a download link string, no binary transferred through MCP).",
     {
       action: z
         .enum(["list", "get", "create", "setup", "fields", "send", "resend", "void", "delete", "audit", "certificate", "download_url"])
@@ -7070,6 +7393,7 @@ export function createMindMcpServer(client: MindClient): McpServer {
       message: z.string().optional().describe("Message to signers — create/send/resend."),
       send: z.boolean().optional().describe("Send immediately on create — create (default false)."),
       signing_order: z.enum(["parallel", "sequential"]).optional().describe("Signing order — create/setup."),
+      identity_verification: z.boolean().optional().describe("Require identity verification — create/setup. When true every signer must take a live camera photo and read a unique spoken statement (with a one-time code) on camera before they can sign; both are stored, hashed and printed on the certificate. Default false."),
       only_email: z.string().optional().describe("Send only to this signer's email — send."),
       signer_email: z.string().optional().describe("Signer email to resend to — required for resend."),
       reason: z.string().optional().describe("Void reason — void."),
@@ -7092,14 +7416,14 @@ export function createMindMcpServer(client: MindClient): McpServer {
             if (!args.pdf_url && !args.pdf_base64) return err("Error: pdf_url or pdf_base64 required for create.");
             return ok(
               await client.call("POST", `${base}/json`, args, [], [], [
-                "title", "pdf_url", "pdf_base64", "signers", "fields", "message", "send", "signing_order",
+                "title", "pdf_url", "pdf_base64", "signers", "fields", "message", "send", "signing_order", "identity_verification",
               ])
             );
           }
           case "setup": {
             const m = need(args, ["envelope_id", "fields", "signers"]);
             if (m) return err(m);
-            return ok(await client.call("PUT", `${base}/{envelope_id}/setup`, args, ["envelope_id"], [], ["fields", "signers", "signing_order"]));
+            return ok(await client.call("PUT", `${base}/{envelope_id}/setup`, args, ["envelope_id"], [], ["fields", "signers", "signing_order", "identity_verification"]));
           }
           case "fields": {
             const m = need(args, ["envelope_id", "fields"]);

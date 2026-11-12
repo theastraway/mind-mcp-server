@@ -8,6 +8,7 @@
  *   mind-mcp --version
  *   mind-mcp --help
  *   mind-mcp setup [...]        (delegates to the setup wizard — see setup.ts)
+ *   mind-mcp poll --session <id> (print each owner reply of a MIND agent session — see poll.ts)
  *
  * Environment variables:
  *   MIND_API_KEY   — Required. Your MIND Developer API key.
@@ -34,6 +35,9 @@ Usage:
   mind-mcp --version                      Print the installed version
   mind-mcp --help                         Show this help
   mind-mcp setup [--key <mind_xxx>]       Run the setup wizard (writes MCP configs)
+  mind-mcp poll --session <session_id>    Print each owner reply of a MIND agent session, one
+                                          stdout line per reply (run it under Claude Code's
+                                          Monitor tool; see "mind-mcp poll --help")
 
 Environment variables:
   MIND_API_KEY   Required to start the server. Your MIND Developer API key.
@@ -47,6 +51,16 @@ Get a key: https://m-i-n-d.ai → Settings → Developer → API Keys`);
 
 async function main() {
   const argv = process.argv.slice(2);
+
+  // `poll` owns its own --help/--version handling and its stdout contract (one line per
+  // reply, nothing else), so it is dispatched before the generic flags below.
+  if (argv[0] === "poll") {
+    const { pollMain } = await import("./poll.js");
+    const code = await pollMain(argv.slice(1));
+    // Let a pending stdout write drain before exiting so the last reply line is never lost.
+    process.stdout.write("", () => process.exit(code));
+    return;
+  }
 
   if (argv.includes("--version") || argv.includes("-v")) {
     console.log(readVersion());
